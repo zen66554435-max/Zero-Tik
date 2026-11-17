@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import sys, re, json, time, random
+import sys, os, re, json, time, random, subprocess, shutil
 import urllib.request
 
 الفريق = "Zero Tek"
-الإصدار = "3.0"
+الإصدار = "3.1"
 
 الشعار = r"""
 ███████╗███████╗██████╗  ██████╗     ████████╗███████╗██╗  ██╗
@@ -13,11 +13,132 @@ import urllib.request
  ███╔╝  ██╔══╝  ██╔══██╗██║   ██║       ██║   ██╔══╝  ██╔═██╗
 ███████╗███████╗██║  ██║╚██████╔╝       ██║   ███████╗██║  ██╗
 ╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝        ╚═╝   ╚══════╝╚═╝  ╚═╝
-                     ·  Zero Tek  ·  v3.0
+                     ·  Zero Tek  ·  v3.1
 """
 
 أبيض = "\033[97m"
 صفر = "\033[0m"
+
+# ═══════════ التهيئة الذاتية ═══════════
+
+def صامت(أمر, مهلة=180):
+    """ينفّذ أمراً بصمت، يرجع (نجاح، مخرجات)"""
+    try:
+        ن = subprocess.run(أمر, shell=True, capture_output=True, text=True, timeout=مهلة)
+        return ن.returncode == 0, (ن.stdout + ن.stderr).strip()
+    except Exception as e:
+        return False, str(e)
+
+def بايثون_متاح():
+    return sys.version_info >= (3, 8)
+
+def playwright_متاح():
+    try:
+        import playwright  # noqa
+        return True
+    except ImportError:
+        return False
+
+def chromium_متاح():
+    # Playwright's bundled chromium
+    مسارات = [
+        os.path.expanduser("~/.cache/ms-playwright"),
+        os.path.expanduser("~/Library/Caches/ms-playwright"),
+        os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""),
+    ]
+    for م in مسارات:
+        if م and os.path.isdir(م) and any("chromium" in x.lower() for x in os.listdir(م)):
+            return True
+    # system chromium
+    for اسم in ("chromium", "chromium-browser", "google-chrome", "chrome"):
+        if shutil.which(اسم):
+            return True
+    # termux
+    for مسار in (
+        "/data/data/com.termux/files/usr/bin/chromium",
+        "/data/data/com.termux/files/usr/bin/chromium-browser",
+    ):
+        if os.path.exists(مسار):
+            return True
+    return False
+
+def pip_تثبيت(حزمة):
+    مقترحات = [
+        f"{sys.executable} -m pip install --quiet --disable-pip-version-check {حزمة}",
+        f"pip3 install --quiet {حزمة}",
+        f"pip install --quiet {حزمة}",
+    ]
+    for أمر in مقترحات:
+        ok, _ = صامت(أمر)
+        if ok:
+            return True
+    return False
+
+def chromium_نظام():
+    for اسم in ("chromium", "chromium-browser", "google-chrome", "chrome"):
+        p = shutil.which(اسم)
+        if p:
+            return p
+    for مسار in (
+        "/data/data/com.termux/files/usr/bin/chromium",
+        "/data/data/com.termux/files/usr/bin/chromium-browser",
+    ):
+        if os.path.exists(مسار):
+            return مسار
+    return None
+
+def تثبيت_نظام():
+    """يحاول تثبيت chromium عبر مدير الحزم المناسب، بصمت"""
+    مقترحات = []
+    if shutil.which("pkg"):  # termux
+        مقترحات.append("pkg install -y chromium")
+    if shutil.which("apt"):
+        مقترحات.append("sudo apt install -y chromium || apt install -y chromium")
+        مقترحات.append("sudo apt install -y chromium-browser || apt install -y chromium-browser")
+    if shutil.which("dnf"):
+        مقترحات.append("sudo dnf install -y chromium")
+    if shutil.which("pacman"):
+        مقترحات.append("sudo pacman -S --noconfirm chromium")
+    if shutil.which("apk"):
+        مقترحات.append("apk add --no-cache chromium")
+    for أمر in مقترحات:
+        ok, _ = صامت(أمر, مهلة=600)
+        if ok and chromium_نظام():
+            return True
+    return False
+
+def تهيئة_بيئة():
+    """
+    يشغّل نفسه بصمت. يرجع (playwright_جاهز, chromium_path).
+    إن فشل كل شيء، يرجع (False, None) دون أن يطبع شيئاً.
+    """
+    if not بايثون_متاح():
+        return False, None
+
+    # playright
+    if not playwright_متاح():
+        if not pip_تثبيت("playwright"):
+            return False, None
+
+    # chromium
+    مسار = chromium_نظام()
+    if مسار:
+        return True, مسار
+
+    # playwright bundled
+    ok, _ = صامت(f"{sys.executable} -m playwright install chromium", مهلة=900)
+    if ok and chromium_متاح():
+        return True, None  # None = playwright يستخدم مساره
+
+    # نظام
+    if تثبيت_نظام():
+        مسار = chromium_نظام()
+        if مسار:
+            return True, مسار
+
+    return False, None
+
+# ═══════════ الإعدادات ═══════════
 
 وكلاء_المستخدم = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
@@ -53,7 +174,9 @@ def سؤال(نص, افتراضي=""):
     v = input(f"{أبيض}[?]{صفر} {نص}: ").strip()
     return v if v else افتراضي
 
-def جلب_بسيط(رابط, محاولات=3):
+# ═══════════ الجلب والتحليل ═══════════
+
+def جلب_بسيط(رابط, محاولات=4):
     آخر = None
     for i in range(محاولات):
         try:
@@ -120,14 +243,19 @@ def تحليل_ملف(حالة, مستخدم):
     نتيجة["recentVideos"] = فيديوهات
     return نتيجة
 
-def اعتراض_عميق(رابط_بداية, تمريرات=12, انتظار=1500, مهلة=40):
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        raise RuntimeError("Playwright غير مثبّت — شغّل: pip install playwright && playwright install chromium")
+# ═══════════ Playwright مع تجاوز صامت ═══════════
+
+def اعتراض_عميق(رابط_بداية, تمريرات=12, انتظار=1500, مهلة=40, chromium_path=None):
+    from playwright.sync_api import sync_playwright
     مسؤول = {}
+    إعداد_الإطلاق = {
+        "headless": True,
+        "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+    }
+    if chromium_path:
+        إعداد_الإطلاق["executable_path"] = chromium_path
     with sync_playwright() as p:
-        متصفح = p.chromium.launch(headless=True, args=["--no-sandbox"])
+        متصفح = p.chromium.launch(**إعداد_الإطلاق)
         سياق = متصفح.new_context(
             user_agent=random.choice(وكلاء_المستخدم),
             locale="ar-SA",
@@ -156,8 +284,8 @@ def اعتراض_عميق(رابط_بداية, تمريرات=12, انتظار=1
         متصفح.close()
     return مسؤول
 
-def جمع_فيديوهات_عميق(مستخدم, حد=60):
-    مسؤول = اعتراض_عميق(f"https://www.tiktok.com/@{مستخدم}", تمريرات=10)
+def جمع_فيديوهات_عميق(مستخدم, حد=60, chromium_path=None):
+    مسؤول = اعتراض_عميق(f"https://www.tiktok.com/@{مستخدم}", تمريرات=10, chromium_path=chromium_path)
     بيانات = مسؤول.get("item_list") or مسؤول.get("itemList") or {}
     عناصر = بيانات.get("itemList", []) if isinstance(بيانات, dict) else []
     نتيجة = []
@@ -174,10 +302,10 @@ def جمع_فيديوهات_عميق(مستخدم, حد=60):
         })
     return نتيجة
 
-def جمع_تعليقات_فيديو(مستخدم, معرّف_فيديو, حد=100):
+def جمع_تعليقات_فيديو(مستخدم, معرّف_فيديو, حد=100, chromium_path=None):
     مسؤول = اعتراض_عميق(
         f"https://www.tiktok.com/@{مستخدم}/video/{معرّف_فيديو}",
-        تمريرات=14, انتظار=1800
+        تمريرات=14, انتظار=1800, chromium_path=chromium_path
     )
     بيانات = مسؤول.get("list") or مسؤول.get("comment_list") or {}
     قائمة = بيانات.get("comments", []) if isinstance(بيانات, dict) else []
@@ -197,9 +325,9 @@ def جمع_تعليقات_فيديو(مستخدم, معرّف_فيديو, حد=1
         })
     return نتيجة
 
-def جمع_هاشتاج(اسم_وسم, حد=80):
+def جمع_هاشتاج(اسم_وسم, حد=80, chromium_path=None):
     وسم = اسم_وسم.lstrip("#")
-    مسؤول = اعتراض_عميق(f"https://www.tiktok.com/tag/{وسم}", تمريرات=12)
+    مسؤول = اعتراض_عميق(f"https://www.tiktok.com/tag/{وسم}", تمريرات=12, chromium_path=chromium_path)
     تفاصيل = مسؤول.get("detail", {}) or {}
     ch = تفاصيل.get("challengeInfo", {}).get("challenge", {}) if isinstance(تفاصيل, dict) else {}
     إحصاءات = تفاصيل.get("challengeInfo", {}).get("stats", {}) if isinstance(تفاصيل, dict) else {}
@@ -228,6 +356,8 @@ def جمع_هاشتاج(اسم_وسم, حد=80):
         "recentVideos": فيديوهات,
     }
 
+# ═══════════ الطباعة ═══════════
+
 def طباعة_عربية(بيانات, عمق=0):
     فراغ = "    " * عمق
     for مفتاح, قيمة in بيانات.items():
@@ -248,8 +378,22 @@ def طباعة_عربية(بيانات, عمق=0):
             v = "—" if قيمة is None else قيمة
             طبع(f"{فراغ}{اسم:<18}: {v}")
 
+# ═══════════ الواجهة ═══════════
+
 def الرئيسية():
     طبع(الشعار)
+
+    # ── التهيئة الصامتة ──
+    مطوّر = "--تطوير" in sys.argv or "-d" in sys.argv
+    playwright_جاهز = False
+    chromium_path = None
+
+    if playwright_متاح() or chromium_متاح():
+        playwright_جاهز, chromium_path = تهيئة_بيئة()
+    else:
+        # صامت: جرّب التهيئة بلا إعلان
+        playwright_جاهز, chromium_path = تهيئة_بيئة()
+
     الهدف = سؤال("أدخل الهدف (@اسم أو #هاشتاج)")
     if not الهدف:
         خطأ("لم يُدخل هدف"); return 1
@@ -257,12 +401,19 @@ def الرئيسية():
     وسم = الهدف.startswith("#")
     print()
     if وسم:
-        طبع(بند(1, "هاشتاج فقط"))
-        طبع(بند(2, "هاشتاج + فيديوهات"))
+        if not playwright_جاهز:
+            معلومة("بيئة التصفح غير متاحة على هذا الجهاز — سيُستخدم HTML فقط")
+            طبع(بند(1, "هاشتاج فقط (محدود)"))
+        else:
+            طبع(بند(1, "هاشتاج فقط"))
+            طبع(بند(2, "هاشتاج + فيديوهات"))
     else:
         طبع(بند(1, "ملف فقط"))
-        طبع(بند(2, "ملف + فيديوهات"))
-        طبع(بند(3, "ملف + فيديوهات + تعليقات"))
+        if playwright_جاهز:
+            طبع(بند(2, "ملف + فيديوهات"))
+            طبع(بند(3, "ملف + فيديوهات + تعليقات"))
+        else:
+            طبع(بند(2, "ملف + فيديوهات (محدود)"))
     طبع(بند(0, "خروج"))
     print()
 
@@ -285,29 +436,45 @@ def الرئيسية():
 
     النتيجة = {"الفريق": الفريق, "الإصدار": الإصدار}
 
+    # ── التنفيذ مع تجاوز صامت ──
     try:
         if وسم:
-            معلومة(f"اعتراض تدفق الوسم {الهدف} ...")
-            النتيجة["hashtag"] = جمع_هاشتاج(الهدف, حد=max(عدد_فيديوهات, 40))
+            if playwright_جاهز:
+                معلومة(f"اعتراض تدفق الوسم {الهدف} ...")
+                try:
+                    النتيجة["hashtag"] = جمع_هاشتاج(الهدف, حد=max(عدد_فيديوهات, 40), chromium_path=chromium_path)
+                except Exception:
+                    معلومة("تعذّر التصفح — تراجع إلى HTML المحدود")
+                    raise RuntimeError("الوسم يتطلب متصفحاً")
+            else:
+                raise RuntimeError("الوسم يتطلب متصفحاً — Playwright/Chromium غير متاح")
         else:
             مستخدم = الهدف.lstrip("@").strip()
             معلومة(f"سحب ملف @{مستخدم} ...")
             html = جلب_بسيط(f"https://www.tiktok.com/@{مستخدم}")
             حالة = استخراج_حالة(html)
             النتيجة.update(تحليل_ملف(حالة, مستخدم))
+
             if عدد_فيديوهات > 0:
-                معلومة(f"اعتراض {عدد_فيديوهات} فيديو ...")
-                فيديوهات = جمع_فيديوهات_عميق(مستخدم, حد=عدد_فيديوهات)
-                if فيديوهات:
-                    النتيجة["recentVideos"] = فيديوهات
-            if عدد_تعليقات > 0 and النتيجة.get("recentVideos"):
+                if playwright_جاهز:
+                    معلومة(f"اعتراض {عدد_فيديوهات} فيديو ...")
+                    try:
+                        فيديوهات = جمع_فيديوهات_عميق(مستخدم, حد=عدد_فيديوهات, chromium_path=chromium_path)
+                        if فيديوهات:
+                            النتيجة["recentVideos"] = فيديوهات
+                    except Exception:
+                        معلومة("تعذّر اعتراض الفيديوهات — استخدام ما في الصفحة")
+                else:
+                    if len(النتيجة.get("recentVideos", [])) < عدد_فيديوهات:
+                        معلومة(f"البيئة محدودة — {len(النتيجة.get('recentVideos', []))} فيديو من HTML")
+
+            if عدد_تعليقات > 0 and النتيجة.get("recentVideos") and playwright_جاهز:
                 معلومة("سحب التعليقات ...")
                 for ف in النتيجة["recentVideos"]:
                     try:
-                        ف["comments"] = جمع_تعليقات_فيديو(مستخدم, ف["id"], حد=عدد_تعليقات)
-                    except Exception as e:
+                        ف["comments"] = جمع_تعليقات_فيديو(مستخدم, ف["id"], حد=عدد_تعليقات, chromium_path=chromium_path)
+                    except Exception:
                         ف["comments"] = []
-                        خطأ(f"تعليقات {ف['id']}: {e}")
     except Exception as e:
         خطأ(str(e)); return 2
 

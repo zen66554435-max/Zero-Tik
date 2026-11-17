@@ -46,7 +46,7 @@ _تثبيت_ذاتي()
 
 الفريق = "Zer Day"
 الأداة = "Zero Tik"
-الإصدار = "6.0"
+الإصدار = "6.1"
 مستودع = "zen66554435-max/Zero-Tik"
 
 الشعار = r"""
@@ -56,7 +56,7 @@ _تثبيت_ذاتي()
  ███╔╝  ██╔══╝  ██╔══██╗██║   ██║       ██║   ██║██╔═██╗
 ███████╗███████╗██║  ██║╚██████╔╝       ██║   ██║██║  ██╗
 ╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝        ╚═╝   ╚═╝╚═╝  ╚═╝
-              Zer Day  ·  Zero Tik  v6.0
+              Zer Day  ·  Zero Tik  v6.1
 """
 
 أبيض = "\033[97m"; صفر = "\033[0m"; باهت = "\033[90m"
@@ -233,6 +233,25 @@ def تحليل_ملف(حالة, مستخدم):
         })
     نتيجة["recentVideos"] = فيديوهات
     return نتيجة
+
+def جلب_بمتصفح(رابط, chromium_path=None):
+    from playwright.sync_api import sync_playwright
+    إطلاق = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]}
+    if _proxy: إطلاق["proxy"] = {"server": _proxy}
+    if chromium_path: إطلاق["executable_path"] = chromium_path
+    with sync_playwright() as p:
+        متصفح = p.chromium.launch(**إطلاق)
+        سياق = متصفح.new_context(
+            user_agent=random.choice(وكلاء_المستخدم),
+            locale="ar-SA",
+            viewport={"width": 1280, "height": 2000},
+        )
+        صفحة = سياق.new_page()
+        صفحة.goto(رابط, wait_until="domcontentloaded", timeout=40000)
+        صفحة.wait_for_timeout(3500)
+        html = صفحة.content()
+        متصفح.close()
+    return html
 
 def اعتراض_عميق(رابط_بداية, تمريرات=12, انتظار=1500, مهلة=40, chromium_path=None):
     from playwright.sync_api import sync_playwright
@@ -1092,10 +1111,16 @@ def الرئيسية():
             خطأ("اسم فارغ"); return 1
         معلومة(f"جلب @{أ_اسم} ...")
         try:
-            html_أ = جلب_بسيط(f"https://www.tiktok.com/@{أ_اسم}")
+            if playwright_جاهز:
+                html_أ = جلب_بمتصفح(f"https://www.tiktok.com/@{أ_اسم}", chromium_path)
+            else:
+                html_أ = جلب_بسيط(f"https://www.tiktok.com/@{أ_اسم}")
             ملف_أ = تحليل_ملف(استخراج_حالة(html_أ), أ_اسم)
             معلومة(f"جلب @{ب_اسم} ...")
-            html_ب = جلب_بسيط(f"https://www.tiktok.com/@{ب_اسم}")
+            if playwright_جاهز:
+                html_ب = جلب_بمتصفح(f"https://www.tiktok.com/@{ب_اسم}", chromium_path)
+            else:
+                html_ب = جلب_بسيط(f"https://www.tiktok.com/@{ب_اسم}")
             ملف_ب = تحليل_ملف(استخراج_حالة(html_ب), ب_اسم)
         except Exception as e:
             خطأ(str(e)); return 2
@@ -1148,7 +1173,10 @@ def الرئيسية():
     if الاختيار == "1":
         معلومة(f"سحب @{مستخدم} ...")
         try:
-            html = جلب_بسيط(f"https://www.tiktok.com/@{مستخدم}")
+            if playwright_جاهز:
+                html = جلب_بمتصفح(f"https://www.tiktok.com/@{مستخدم}", chromium_path)
+            else:
+                html = جلب_بسيط(f"https://www.tiktok.com/@{مستخدم}")
             بيانات = تحليل_ملف(استخراج_حالة(html), مستخدم)
         except Exception as e:
             خطأ(str(e)); return 2
@@ -1170,7 +1198,7 @@ def الرئيسية():
         
         معلومة("1/5 جلب الملف الأساسي ...")
         try:
-            html = جلب_بسيط(f"https://www.tiktok.com/@{مستخدم}")
+            html = جلب_بمتصفح(f"https://www.tiktok.com/@{مستخدم}", chromium_path)
             ملف = تحليل_ملف(استخراج_حالة(html), مستخدم)
         except Exception as e:
             خطأ(str(e)); return 2
@@ -1229,7 +1257,10 @@ def الرئيسية():
 
         معلومة("جلب الملف ...")
         try:
-            html = جلب_بسيط(f"https://www.tiktok.com/@{مستخدم}")
+            if playwright_جاهز:
+                html = جلب_بمتصفح(f"https://www.tiktok.com/@{مستخدم}", chromium_path)
+            else:
+                html = جلب_بسيط(f"https://www.tiktok.com/@{مستخدم}")
             ملف = تحليل_ملف(استخراج_حالة(html), مستخدم)
         except Exception as e:
             خطأ(str(e)); return 2

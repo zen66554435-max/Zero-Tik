@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import sys, re, json, time, random
+import urllib.request
+
+الفريق = "Zero Tek"
+الإصدار = "3.0"
+
+الشعار = r"""
+███████╗███████╗██████╗  ██████╗     ████████╗███████╗██╗  ██╗
+╚══███╔╝██╔════╝██╔══██╗██╔═══██╗    ╚══██╔══╝██╔════╝██║ ██╔╝
+  ███╔╝ █████╗  ██████╔╝██║   ██║       ██║   █████╗  █████╔╝
+ ███╔╝  ██╔══╝  ██╔══██╗██║   ██║       ██║   ██╔══╝  ██╔═██╗
+███████╗███████╗██║  ██║╚██████╔╝       ██║   ███████╗██║  ██╗
+╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝        ╚═╝   ╚══════╝╚═╝  ╚═╝
+                     ·  Zero Tek  ·  v3.0
+"""
+
+أبيض = "\033[97m"
+صفر = "\033[0m"
+
+وكلاء_المستخدم = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+]
+
+الحقول = {
+    "username": "اسم المستخدم", "id": "المعرّف", "nickname": "الاسم الظاهر",
+    "signature": "السيرة", "verified": "موثّق", "privateAccount": "حساب خاص",
+    "region": "المنطقة", "createTime": "تاريخ الإنشاء", "avatar": "الصورة",
+    "followers": "المتابعون", "following": "يتابع", "likes": "إجمالي الإعجابات",
+    "videos": "عدد الفيديوهات", "diggCount": "إعجابات مُعطاة", "friendCount": "الأصدقاء",
+    "desc": "الوصف", "playCount": "المشاهدات", "commentCount": "التعليقات",
+    "shareCount": "المشاركات", "collectCount": "الحفظ", "duration": "المدة (ث)",
+    "text": "النص", "likesCount": "إعجابات التعليق", "replyCount": "عدد الردود",
+    "author": "الكاتب", "uniqueId": "المعرّف الفريد", "user": "المستخدم",
+    "challengeName": "اسم الوسم", "title": "العنوان", "viewCount": "المشاهدات",
+    "videoCount": "عدد الفيديوهات", "postsCount": "عدد المنشورات",
+    "itemList": "قائمة العناصر", "hasMore": "يوجد المزيد", "cursor": "المؤشر",
+    "recentVideos": "أحدث الفيديوهات", "comments": "التعليقات",
+    "hashtag": "الهاشتاج", "stats": "الإحصاءات",
+    "الفريق": "الفريق", "الإصدار": "الإصدار",
+}
+
+def طبع(s=""): print(s)
+def خطأ(s): print(f"[خطأ] {s}", file=sys.stderr)
+def معلومة(s): print(f"{أبيض}[*]{صفر} {s}")
+def بند(رقم, نص): return f"{أبيض}[{رقم}]{صفر} {نص}"
+
+def سؤال(نص, افتراضي=""):
+    v = input(f"{أبيض}[?]{صفر} {نص}: ").strip()
+    return v if v else افتراضي
+
+def جلب_بسيط(رابط, محاولات=3):
+    آخر = None
+    for i in range(محاولات):
+        try:
+            طلب = urllib.request.Request(رابط, headers={
+                "User-Agent": random.choice(وكلاء_المستخدم),
+                "Accept-Language": "ar,en;q=0.9",
+                "Accept": "text/html,application/xhtml+xml",
+            })
+            with urllib.request.urlopen(طلب, timeout=25) as رد:
+                if رد.status == 200:
+                    return رد.read().decode("utf-8", errors="replace")
+                آخر = f"HTTP {رد.status}"
+        except Exception as e:
+            آخر = str(e)
+        time.sleep(1.5 * (i + 1))
+    raise RuntimeError(f"فشل الجلب: {آخر}")
+
+def استخراج_حالة(html):
+    for وسم in ("__UNIVERSAL_DATA_FOR_REHYDRATION__", "SIGI_STATE"):
+        م = re.search(r'id="' + وسم + r'"[^>]*>(.*?)</script>', html, re.S)
+        if م:
+            try: return json.loads(م.group(1))
+            except json.JSONDecodeError: continue
+    raise RuntimeError("لم يُعثر على البيانات المضمّنة")
+
+def تحليل_ملف(حالة, مستخدم):
+    نطاق = حالة.get("__DEFAULT_SCOPE__", {})
+    معلومات = نطاق.get("webapp.user-detail", {}).get("userInfo", {})
+    مستخدم_ب = معلومات.get("user") or {}
+    إحصاءات = معلومات.get("stats") or {}
+    عناصر = معلومات.get("itemList") or []
+    if not مستخدم_ب:
+        وحدة = حالة.get("UserModule", {})
+        مستخدم_ب = وحدة.get("users", {}).get(مستخدم, {})
+        إحصاءات = وحدة.get("stats", {}).get(مستخدم, {})
+        عناصر = وحدة.get("items", [])
+    نتيجة = {
+        "username": مستخدم, "id": مستخدم_ب.get("id"),
+        "nickname": مستخدم_ب.get("nickname"),
+        "signature": مستخدم_ب.get("signature"),
+        "verified": مستخدم_ب.get("verified"),
+        "privateAccount": مستخدم_ب.get("privateAccount"),
+        "region": مستخدم_ب.get("region"),
+        "createTime": مستخدم_ب.get("createTime"),
+        "avatar": مستخدم_ب.get("avatarLarger") or مستخدم_ب.get("avatarMedium"),
+        "followers": إحصاءات.get("followerCount"),
+        "following": إحصاءات.get("followingCount"),
+        "likes": إحصاءات.get("heartCount") or إحصاءات.get("heart"),
+        "videos": إحصاءات.get("videoCount"),
+        "diggCount": إحصاءات.get("diggCount"),
+        "friendCount": إحصاءات.get("friendCount"),
+    }
+    فيديوهات = []
+    for ع in عناصر:
+        إ = ع.get("stats", {})
+        فيديوهات.append({
+            "id": ع.get("id"), "desc": ع.get("desc"),
+            "createTime": ع.get("createTime"),
+            "playCount": إ.get("playCount"), "diggCount": إ.get("diggCount"),
+            "commentCount": إ.get("commentCount"), "shareCount": إ.get("shareCount"),
+            "collectCount": إ.get("collectCount"),
+            "duration": (ع.get("video") or {}).get("duration"),
+        })
+    نتيجة["recentVideos"] = فيديوهات
+    return نتيجة
+
+def اعتراض_عميق(رابط_بداية, تمريرات=12, انتظار=1500, مهلة=40):
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise RuntimeError("Playwright غير مثبّت — شغّل: pip install playwright && playwright install chromium")
+    مسؤول = {}
+    with sync_playwright() as p:
+        متصفح = p.chromium.launch(headless=True, args=["--no-sandbox"])
+        سياق = متصفح.new_context(
+            user_agent=random.choice(وكلاء_المستخدم),
+            locale="ar-SA",
+            viewport={"width": 1280, "height": 2000},
+        )
+        صفحة = سياق.new_page()
+        def عند_رد(رد):
+            u = رد.url
+            if "tiktok.com/api/" in u:
+                try:
+                    اسم = u.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+                    مسؤول[اسم] = رد.json()
+                except Exception:
+                    pass
+        صفحة.on("response", عند_رد)
+        صفحة.goto(رابط_بداية, wait_until="domcontentloaded", timeout=مهلة * 1000)
+        صفحة.wait_for_timeout(3000)
+        for _ in range(تمريرات):
+            صفحة.mouse.wheel(0, 2500)
+            صفحة.wait_for_timeout(انتظار)
+            try:
+                زر = صفحة.query_selector('button[aria-label="Close"], [data-e2e="modal-close-inner-button"]')
+                if زر: زر.click()
+            except Exception:
+                pass
+        متصفح.close()
+    return مسؤول
+
+def جمع_فيديوهات_عميق(مستخدم, حد=60):
+    مسؤول = اعتراض_عميق(f"https://www.tiktok.com/@{مستخدم}", تمريرات=10)
+    بيانات = مسؤول.get("item_list") or مسؤول.get("itemList") or {}
+    عناصر = بيانات.get("itemList", []) if isinstance(بيانات, dict) else []
+    نتيجة = []
+    for ع in عناصر[:حد]:
+        إ = ع.get("stats", {})
+        نتيجة.append({
+            "id": ع.get("id"), "desc": ع.get("desc"),
+            "createTime": ع.get("createTime"),
+            "playCount": إ.get("playCount"), "diggCount": إ.get("diggCount"),
+            "commentCount": إ.get("commentCount"),
+            "shareCount": إ.get("shareCount"),
+            "collectCount": إ.get("collectCount"),
+            "duration": (ع.get("video") or {}).get("duration"),
+        })
+    return نتيجة
+
+def جمع_تعليقات_فيديو(مستخدم, معرّف_فيديو, حد=100):
+    مسؤول = اعتراض_عميق(
+        f"https://www.tiktok.com/@{مستخدم}/video/{معرّف_فيديو}",
+        تمريرات=14, انتظار=1800
+    )
+    بيانات = مسؤول.get("list") or مسؤول.get("comment_list") or {}
+    قائمة = بيانات.get("comments", []) if isinstance(بيانات, dict) else []
+    نتيجة = []
+    for ت in قائمة[:حد]:
+        م = ت.get("user", {})
+        نتيجة.append({
+            "text": ت.get("text"),
+            "likesCount": ت.get("digg_count") or ت.get("likesCount"),
+            "replyCount": ت.get("reply_comment_total") or ت.get("replyCount"),
+            "createTime": ت.get("create_time") or ت.get("createTime"),
+            "author": {
+                "uniqueId": م.get("unique_id") or م.get("uniqueId"),
+                "nickname": م.get("nickname"),
+                "id": م.get("uid") or م.get("id"),
+            },
+        })
+    return نتيجة
+
+def جمع_هاشتاج(اسم_وسم, حد=80):
+    وسم = اسم_وسم.lstrip("#")
+    مسؤول = اعتراض_عميق(f"https://www.tiktok.com/tag/{وسم}", تمريرات=12)
+    تفاصيل = مسؤول.get("detail", {}) or {}
+    ch = تفاصيل.get("challengeInfo", {}).get("challenge", {}) if isinstance(تفاصيل, dict) else {}
+    إحصاءات = تفاصيل.get("challengeInfo", {}).get("stats", {}) if isinstance(تفاصيل, dict) else {}
+    عناصر_بيانات = مسؤول.get("item_list", {}) or {}
+    عناصر = عناصر_بيانات.get("itemList", []) if isinstance(عناصر_بيانات, dict) else []
+    فيديوهات = []
+    for ع in عناصر[:حد]:
+        إ = ع.get("stats", {})
+        م = ع.get("author", {})
+        فيديوهات.append({
+            "id": ع.get("id"), "desc": ع.get("desc"),
+            "createTime": ع.get("createTime"),
+            "playCount": إ.get("playCount"),
+            "diggCount": إ.get("diggCount"),
+            "commentCount": إ.get("commentCount"),
+            "shareCount": إ.get("shareCount"),
+            "author": {"uniqueId": م.get("uniqueId"), "nickname": م.get("nickname")},
+        })
+    return {
+        "hashtag": {
+            "challengeName": ch.get("challengeName") or وسم,
+            "title": ch.get("challengeName") or وسم,
+            "viewCount": إحصاءات.get("viewCount"),
+            "videoCount": إحصاءات.get("videoCount"),
+        },
+        "recentVideos": فيديوهات,
+    }
+
+def طباعة_عربية(بيانات, عمق=0):
+    فراغ = "    " * عمق
+    for مفتاح, قيمة in بيانات.items():
+        اسم = الحقول.get(مفتاح, مفتاح)
+        if isinstance(قيمة, dict):
+            طبع(f"{فراغ}{اسم}:")
+            طباعة_عربية(قيمة, عمق + 1)
+        elif isinstance(قيمة, list):
+            if not قيمة: continue
+            طبع(f"\n{فراغ}──── {اسم} ({len(قيمة)}) ────")
+            for رقم, عنصر in enumerate(قيمة, 1):
+                طبع(f"\n{فراغ}  [{رقم}]")
+                if isinstance(عنصر, dict):
+                    طباعة_عربية(عنصر, عمق + 2)
+                else:
+                    طبع(f"{فراغ}      {عنصر}")
+        else:
+            v = "—" if قيمة is None else قيمة
+            طبع(f"{فراغ}{اسم:<18}: {v}")
+
+def الرئيسية():
+    طبع(الشعار)
+    الهدف = سؤال("أدخل الهدف (@اسم أو #هاشتاج)")
+    if not الهدف:
+        خطأ("لم يُدخل هدف"); return 1
+
+    وسم = الهدف.startswith("#")
+    print()
+    if وسم:
+        طبع(بند(1, "هاشتاج فقط"))
+        طبع(بند(2, "هاشتاج + فيديوهات"))
+    else:
+        طبع(بند(1, "ملف فقط"))
+        طبع(بند(2, "ملف + فيديوهات"))
+        طبع(بند(3, "ملف + فيديوهات + تعليقات"))
+    طبع(بند(0, "خروج"))
+    print()
+
+    الاختيار = سؤال("اختر الرقم", "1")
+    if الاختيار == "0": return 0
+
+    عدد_فيديوهات = 0
+    عدد_تعليقات = 0
+    if not وسم:
+        if الاختيار in ("2", "3"):
+            عدد_فيديوهات = int(سؤال("كم فيديو", "20"))
+        if الاختيار == "3":
+            عدد_تعليقات = int(سؤال("كم تعليق لكل فيديو", "50"))
+    else:
+        if الاختيار == "2":
+            عدد_فيديوهات = int(سؤال("كم فيديو من الوسم", "40"))
+
+    تصدير_json = سؤال("تصدير JSON؟ (ن/ي)", "ن").lower() in ("ي", "y", "yes")
+    ملف_حفظ = سؤال("حفظ إلى ملف (فراغ = لا)", "")
+
+    النتيجة = {"الفريق": الفريق, "الإصدار": الإصدار}
+
+    try:
+        if وسم:
+            معلومة(f"اعتراض تدفق الوسم {الهدف} ...")
+            النتيجة["hashtag"] = جمع_هاشتاج(الهدف, حد=max(عدد_فيديوهات, 40))
+        else:
+            مستخدم = الهدف.lstrip("@").strip()
+            معلومة(f"سحب ملف @{مستخدم} ...")
+            html = جلب_بسيط(f"https://www.tiktok.com/@{مستخدم}")
+            حالة = استخراج_حالة(html)
+            النتيجة.update(تحليل_ملف(حالة, مستخدم))
+            if عدد_فيديوهات > 0:
+                معلومة(f"اعتراض {عدد_فيديوهات} فيديو ...")
+                فيديوهات = جمع_فيديوهات_عميق(مستخدم, حد=عدد_فيديوهات)
+                if فيديوهات:
+                    النتيجة["recentVideos"] = فيديوهات
+            if عدد_تعليقات > 0 and النتيجة.get("recentVideos"):
+                معلومة("سحب التعليقات ...")
+                for ف in النتيجة["recentVideos"]:
+                    try:
+                        ف["comments"] = جمع_تعليقات_فيديو(مستخدم, ف["id"], حد=عدد_تعليقات)
+                    except Exception as e:
+                        ف["comments"] = []
+                        خطأ(f"تعليقات {ف['id']}: {e}")
+    except Exception as e:
+        خطأ(str(e)); return 2
+
+    if تصدير_json:
+        نص = json.dumps(النتيجة, ensure_ascii=False, indent=2)
+        طبع(نص)
+    else:
+        from io import StringIO
+        مخزن = StringIO(); قديم = sys.stdout; sys.stdout = مخزن
+        طباعة_عربية(النتيجة)
+        sys.stdout = قديم
+        نص = مخزن.getvalue()
+        طبع(نص)
+
+    if ملف_حفظ:
+        with open(ملف_حفظ, "w", encoding="utf-8") as f:
+            f.write(نص)
+        if not تصدير_json: طبع(f"\n{أبيض}[✓]{صفر} حُفظ في: {ملف_حفظ}")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(الرئيسية())

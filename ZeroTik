@@ -1,144 +1,69 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import sys, os, re, json, time, random, subprocess, shutil
+import sys, os, re, json, time, random, subprocess, shutil, csv
+from datetime import datetime
+from collections import defaultdict
 import urllib.request
 
-الفريق = "Zero Tek"
-الإصدار = "3.1"
+def _تثبيت_ذاتي():
+    مسار_حالي = os.path.abspath(__file__)
+    هدف = os.path.expanduser("~/.zerotik/zerotik.py")
+    if os.path.abspath(هدف) == مسار_حالي:
+        return
+    if os.path.exists(هدف):
+        try:
+            if os.path.getmtime(هدف) >= os.path.getmtime(مسار_حالي):
+                return
+        except Exception:
+            pass
+    if "--no-install" in sys.argv:
+        return
+    try:
+        os.makedirs(os.path.expanduser("~/.zerotik"), exist_ok=True)
+        os.makedirs(os.path.expanduser("~/.local/bin"), exist_ok=True)
+        shutil.copy2(مسار_حالي, هدف)
+        غلاف = os.path.expanduser("~/.local/bin/zerotik")
+        with open(غلاف, "w") as f:
+            f.write('#!/bin/sh\nexec python3 "$HOME/.zerotik/zerotik.py" "$@"\n')
+        os.chmod(غلاف, 0o755)
+        bin_dir = os.path.expanduser("~/.local/bin")
+        if bin_dir not in os.environ.get("PATH", ""):
+            for rc in ("~/.bashrc", "~/.zshrc", "~/.profile"):
+                مسار_rc = os.path.expanduser(rc)
+                if os.path.exists(مسار_rc):
+                    try:
+                        with open(مسار_rc) as f:
+                            if bin_dir in f.read():
+                                continue
+                        with open(مسار_rc, "a") as f:
+                            f.write(f'\nexport PATH="$HOME/.local/bin:$PATH"\n')
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+_تثبيت_ذاتي()
+
+الفريق = "Zer Day"
+الأداة = "Zero Tik"
+الإصدار = "5.0"
+مستودع = "zen66554435-max/Zero-Tik"
 
 الشعار = r"""
-███████╗███████╗██████╗  ██████╗     ████████╗███████╗██╗  ██╗
-╚══███╔╝██╔════╝██╔══██╗██╔═══██╗    ╚══██╔══╝██╔════╝██║ ██╔╝
-  ███╔╝ █████╗  ██████╔╝██║   ██║       ██║   █████╗  █████╔╝
- ███╔╝  ██╔══╝  ██╔══██╗██║   ██║       ██║   ██╔══╝  ██╔═██╗
-███████╗███████╗██║  ██║╚██████╔╝       ██║   ███████╗██║  ██╗
-╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝        ╚═╝   ╚══════╝╚═╝  ╚═╝
-                     ·  Zero Tek  ·  v3.1
+███████╗███████╗██████╗  ██████╗     ████████╗██╗██╗  ██╗
+╚══███╔╝██╔════╝██╔══██╗██╔═══██╗    ╚══██╔══╝██║██║ ██╔╝
+  ███╔╝ █████╗  ██████╔╝██║   ██║       ██║   ██║█████╔╝
+ ███╔╝  ██╔══╝  ██╔══██╗██║   ██║       ██║   ██║██╔═██╗
+███████╗███████╗██║  ██║╚██████╔╝       ██║   ██║██║  ██╗
+╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝        ╚═╝   ╚═╝╚═╝  ╚═╝
+              Zer Day  ·  Zero Tik  v5.0
 """
 
-أبيض = "\033[97m"
-صفر = "\033[0m"
+أبيض = "\033[97m"; صفر = "\033[0m"; باهت = "\033[90m"
+سماوي = "\033[96m"; أخضر = "\033[92m"; أصفر = "\033[93m"; أحمر = "\033[91m"
 
-# ═══════════ التهيئة الذاتية ═══════════
-
-def صامت(أمر, مهلة=180):
-    """ينفّذ أمراً بصمت، يرجع (نجاح، مخرجات)"""
-    try:
-        ن = subprocess.run(أمر, shell=True, capture_output=True, text=True, timeout=مهلة)
-        return ن.returncode == 0, (ن.stdout + ن.stderr).strip()
-    except Exception as e:
-        return False, str(e)
-
-def بايثون_متاح():
-    return sys.version_info >= (3, 8)
-
-def playwright_متاح():
-    try:
-        import playwright  # noqa
-        return True
-    except ImportError:
-        return False
-
-def chromium_متاح():
-    # Playwright's bundled chromium
-    مسارات = [
-        os.path.expanduser("~/.cache/ms-playwright"),
-        os.path.expanduser("~/Library/Caches/ms-playwright"),
-        os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""),
-    ]
-    for م in مسارات:
-        if م and os.path.isdir(م) and any("chromium" in x.lower() for x in os.listdir(م)):
-            return True
-    # system chromium
-    for اسم in ("chromium", "chromium-browser", "google-chrome", "chrome"):
-        if shutil.which(اسم):
-            return True
-    # termux
-    for مسار in (
-        "/data/data/com.termux/files/usr/bin/chromium",
-        "/data/data/com.termux/files/usr/bin/chromium-browser",
-    ):
-        if os.path.exists(مسار):
-            return True
-    return False
-
-def pip_تثبيت(حزمة):
-    مقترحات = [
-        f"{sys.executable} -m pip install --quiet --disable-pip-version-check {حزمة}",
-        f"pip3 install --quiet {حزمة}",
-        f"pip install --quiet {حزمة}",
-    ]
-    for أمر in مقترحات:
-        ok, _ = صامت(أمر)
-        if ok:
-            return True
-    return False
-
-def chromium_نظام():
-    for اسم in ("chromium", "chromium-browser", "google-chrome", "chrome"):
-        p = shutil.which(اسم)
-        if p:
-            return p
-    for مسار in (
-        "/data/data/com.termux/files/usr/bin/chromium",
-        "/data/data/com.termux/files/usr/bin/chromium-browser",
-    ):
-        if os.path.exists(مسار):
-            return مسار
-    return None
-
-def تثبيت_نظام():
-    """يحاول تثبيت chromium عبر مدير الحزم المناسب، بصمت"""
-    مقترحات = []
-    if shutil.which("pkg"):  # termux
-        مقترحات.append("pkg install -y chromium")
-    if shutil.which("apt"):
-        مقترحات.append("sudo apt install -y chromium || apt install -y chromium")
-        مقترحات.append("sudo apt install -y chromium-browser || apt install -y chromium-browser")
-    if shutil.which("dnf"):
-        مقترحات.append("sudo dnf install -y chromium")
-    if shutil.which("pacman"):
-        مقترحات.append("sudo pacman -S --noconfirm chromium")
-    if shutil.which("apk"):
-        مقترحات.append("apk add --no-cache chromium")
-    for أمر in مقترحات:
-        ok, _ = صامت(أمر, مهلة=600)
-        if ok and chromium_نظام():
-            return True
-    return False
-
-def تهيئة_بيئة():
-    """
-    يشغّل نفسه بصمت. يرجع (playwright_جاهز, chromium_path).
-    إن فشل كل شيء، يرجع (False, None) دون أن يطبع شيئاً.
-    """
-    if not بايثون_متاح():
-        return False, None
-
-    # playright
-    if not playwright_متاح():
-        if not pip_تثبيت("playwright"):
-            return False, None
-
-    # chromium
-    مسار = chromium_نظام()
-    if مسار:
-        return True, مسار
-
-    # playwright bundled
-    ok, _ = صامت(f"{sys.executable} -m playwright install chromium", مهلة=900)
-    if ok and chromium_متاح():
-        return True, None  # None = playwright يستخدم مساره
-
-    # نظام
-    if تثبيت_نظام():
-        مسار = chromium_نظام()
-        if مسار:
-            return True, مسار
-
-    return False, None
-
-# ═══════════ الإعدادات ═══════════
+مجلد_الأرشيف = os.path.expanduser("~/.zerotik/archive")
+مجلد_المخرجات = os.path.expanduser("~/.zerotik/output")
 
 وكلاء_المستخدم = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
@@ -154,30 +79,96 @@ def تهيئة_بيئة():
     "followers": "المتابعون", "following": "يتابع", "likes": "إجمالي الإعجابات",
     "videos": "عدد الفيديوهات", "diggCount": "إعجابات مُعطاة", "friendCount": "الأصدقاء",
     "desc": "الوصف", "playCount": "المشاهدات", "commentCount": "التعليقات",
-    "shareCount": "المشاركات", "collectCount": "الحفظ", "duration": "المدة (ث)",
-    "text": "النص", "likesCount": "إعجابات التعليق", "replyCount": "عدد الردود",
-    "author": "الكاتب", "uniqueId": "المعرّف الفريد", "user": "المستخدم",
-    "challengeName": "اسم الوسم", "title": "العنوان", "viewCount": "المشاهدات",
-    "videoCount": "عدد الفيديوهات", "postsCount": "عدد المنشورات",
-    "itemList": "قائمة العناصر", "hasMore": "يوجد المزيد", "cursor": "المؤشر",
+    "shareCount": "المشاركات", "collectCount": "الحفظ", "duration": "المدة",
+    "text": "النص", "likesCount": "إعجابات", "replyCount": "الردود",
+    "author": "الكاتب", "uniqueId": "المعرّف الفريد",
     "recentVideos": "أحدث الفيديوهات", "comments": "التعليقات",
-    "hashtag": "الهاشتاج", "stats": "الإحصاءات",
-    "الفريق": "الفريق", "الإصدار": "الإصدار",
+    "replies": "الردود", "hashtag": "الهاشتاج",
 }
 
 def طبع(s=""): print(s)
-def خطأ(s): print(f"[خطأ] {s}", file=sys.stderr)
-def معلومة(s): print(f"{أبيض}[*]{صفر} {s}")
-def بند(رقم, نص): return f"{أبيض}[{رقم}]{صفر} {نص}"
+def خطأ(s): print(f"{أحمر}[✗]{صفر} {s}", file=sys.stderr)
+def نجاح(s): print(f"{أخضر}[✓]{صفر} {s}")
+def معلومة(s): print(f"{سماوي}[*]{صفر} {s}")
+def تحذير(s): print(f"{أصفر}[!]{صفر} {s}")
 
 def سؤال(نص, افتراضي=""):
     v = input(f"{أبيض}[?]{صفر} {نص}: ").strip()
     return v if v else افتراضي
 
-# ═══════════ الجلب والتحليل ═══════════
+def بند(رقم, نص): return f"  {أبيض}[{رقم}]{صفر} {نص}"
+
+def خط_فاصل(حرف="─", طول=60):
+    طبع(f"{باهت}{حرف * طول}{صفر}")
+
+def عنوان(نص):
+    طبع()
+    خط_فاصل("═")
+    طبع(f"  {أبيض}{نص}{صفر}")
+    خط_فاصل("═")
+
+def صامت(أمر, مهلة=180):
+    try:
+        ن = subprocess.run(أمر, shell=True, capture_output=True, text=True, timeout=مهلة)
+        return ن.returncode == 0, (ن.stdout + ن.stderr).strip()
+    except Exception as e:
+        return False, str(e)
+
+def playwright_متاح():
+    try:
+        import playwright  # noqa
+        return True
+    except ImportError:
+        return False
+
+def chromium_نظام():
+    for اسم in ("chromium", "chromium-browser", "google-chrome", "chrome"):
+        p = shutil.which(اسم)
+        if p: return p
+    for مسار in ("/data/data/com.termux/files/usr/bin/chromium",
+                 "/data/data/com.termux/files/usr/bin/chromium-browser"):
+        if os.path.exists(مسار): return مسار
+    return None
+
+def chromium_playwright():
+    for م in (os.path.expanduser("~/.cache/ms-playwright"),
+              os.path.expanduser("~/Library/Caches/ms-playwright")):
+        if os.path.isdir(م) and any("chromium" in x.lower() for x in os.listdir(م)):
+            return True
+    return False
+
+def pip_تثبيت(حزمة):
+    for أمر in (f"{sys.executable} -m pip install --quiet --disable-pip-version-check {حزمة}",
+                f"pip3 install --quiet {حزمة}",
+                f"pip install --quiet {حزمة}"):
+        ok, _ = صامت(أمر)
+        if ok: return True
+    return False
+
+def تهيئة_بيئة():
+    if sys.version_info < (3, 8): return False, None
+    if not playwright_متاح() and not pip_تثبيت("playwright"):
+        return False, None
+    مسار = chromium_نظام()
+    if مسار: return True, مسار
+    ok, _ = صامت(f"{sys.executable} -m playwright install chromium", مهلة=900)
+    if ok and chromium_playwright(): return True, None
+    return False, None
+
+_proxy = None
+def ضبط_البروكسي(ب):
+    global _proxy
+    _proxy = ب or None
+
+def جالب():
+    if _proxy:
+        h = urllib.request.ProxyHandler({"http": _proxy, "https": _proxy})
+        return urllib.request.build_opener(h)
+    return urllib.request.build_opener()
 
 def جلب_بسيط(رابط, محاولات=4):
     آخر = None
+    فاتح = جالب()
     for i in range(محاولات):
         try:
             طلب = urllib.request.Request(رابط, headers={
@@ -185,7 +176,7 @@ def جلب_بسيط(رابط, محاولات=4):
                 "Accept-Language": "ar,en;q=0.9",
                 "Accept": "text/html,application/xhtml+xml",
             })
-            with urllib.request.urlopen(طلب, timeout=25) as رد:
+            with فاتح.open(طلب, timeout=25) as رد:
                 if رد.status == 200:
                     return رد.read().decode("utf-8", errors="replace")
                 آخر = f"HTTP {رد.status}"
@@ -243,19 +234,14 @@ def تحليل_ملف(حالة, مستخدم):
     نتيجة["recentVideos"] = فيديوهات
     return نتيجة
 
-# ═══════════ Playwright مع تجاوز صامت ═══════════
-
 def اعتراض_عميق(رابط_بداية, تمريرات=12, انتظار=1500, مهلة=40, chromium_path=None):
     from playwright.sync_api import sync_playwright
     مسؤول = {}
-    إعداد_الإطلاق = {
-        "headless": True,
-        "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-    }
-    if chromium_path:
-        إعداد_الإطلاق["executable_path"] = chromium_path
+    إطلاق = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]}
+    if _proxy: إطلاق["proxy"] = {"server": _proxy}
+    if chromium_path: إطلاق["executable_path"] = chromium_path
     with sync_playwright() as p:
-        متصفح = p.chromium.launch(**إعداد_الإطلاق)
+        متصفح = p.chromium.launch(**إطلاق)
         سياق = متصفح.new_context(
             user_agent=random.choice(وكلاء_المستخدم),
             locale="ar-SA",
@@ -268,8 +254,7 @@ def اعتراض_عميق(رابط_بداية, تمريرات=12, انتظار=1
                 try:
                     اسم = u.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
                     مسؤول[اسم] = رد.json()
-                except Exception:
-                    pass
+                except Exception: pass
         صفحة.on("response", عند_رد)
         صفحة.goto(رابط_بداية, wait_until="domcontentloaded", timeout=مهلة * 1000)
         صفحة.wait_for_timeout(3000)
@@ -279,8 +264,7 @@ def اعتراض_عميق(رابط_بداية, تمريرات=12, انتظار=1
             try:
                 زر = صفحة.query_selector('button[aria-label="Close"], [data-e2e="modal-close-inner-button"]')
                 if زر: زر.click()
-            except Exception:
-                pass
+            except Exception: pass
         متصفح.close()
     return مسؤول
 
@@ -295,34 +279,117 @@ def جمع_فيديوهات_عميق(مستخدم, حد=60, chromium_path=None):
             "id": ع.get("id"), "desc": ع.get("desc"),
             "createTime": ع.get("createTime"),
             "playCount": إ.get("playCount"), "diggCount": إ.get("diggCount"),
-            "commentCount": إ.get("commentCount"),
-            "shareCount": إ.get("shareCount"),
+            "commentCount": إ.get("commentCount"), "shareCount": إ.get("shareCount"),
             "collectCount": إ.get("collectCount"),
             "duration": (ع.get("video") or {}).get("duration"),
         })
     return نتيجة
 
-def جمع_تعليقات_فيديو(مستخدم, معرّف_فيديو, حد=100, chromium_path=None):
-    مسؤول = اعتراض_عميق(
-        f"https://www.tiktok.com/@{مستخدم}/video/{معرّف_فيديو}",
-        تمريرات=14, انتظار=1800, chromium_path=chromium_path
-    )
-    بيانات = مسؤول.get("list") or مسؤول.get("comment_list") or {}
-    قائمة = بيانات.get("comments", []) if isinstance(بيانات, dict) else []
-    نتيجة = []
-    for ت in قائمة[:حد]:
-        م = ت.get("user", {})
-        نتيجة.append({
-            "text": ت.get("text"),
-            "likesCount": ت.get("digg_count") or ت.get("likesCount"),
-            "replyCount": ت.get("reply_comment_total") or ت.get("replyCount"),
-            "createTime": ت.get("create_time") or ت.get("createTime"),
-            "author": {
-                "uniqueId": م.get("unique_id") or م.get("uniqueId"),
-                "nickname": م.get("nickname"),
-                "id": م.get("uid") or م.get("id"),
-            },
-        })
+def جمع_تعليقات_فيديو(مستخدم, معرّف_فيديو, حد=100, chromium_path=None, مع_الردود=True):
+    from playwright.sync_api import sync_playwright
+    مسؤول = {}
+    إطلاق = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]}
+    if _proxy: إطلاق["proxy"] = {"server": _proxy}
+    if chromium_path: إطلاق["executable_path"] = chromium_path
+    with sync_playwright() as p:
+        متصفح = p.chromium.launch(**إطلاق)
+        سياق = متصفح.new_context(
+            user_agent=random.choice(وكلاء_المستخدم),
+            locale="ar-SA",
+            viewport={"width": 1280, "height": 2000},
+        )
+        صفحة = سياق.new_page()
+        def عند_رد(رد):
+            u = رد.url
+            if "tiktok.com/api/" in u:
+                try:
+                    اسم = u.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+                    مسؤول.setdefault(اسم, []).append(رد.json())
+                except Exception: pass
+        صفحة.on("response", عند_رد)
+        صفحة.goto(f"https://www.tiktok.com/@{مستخدم}/video/{معرّف_فيديو}",
+                   wait_until="domcontentloaded", timeout=40000)
+        صفحة.wait_for_timeout(3000)
+        for _ in range(14):
+            صفحة.mouse.wheel(0, 2500)
+            صفحة.wait_for_timeout(1800)
+            try:
+                زر = صفحة.query_selector('button[aria-label="Close"], [data-e2e="modal-close-inner-button"]')
+                if زر: زر.click()
+            except Exception: pass
+        قائمة_تعليقات = []
+        for استجابة in مسؤول.get("list", []):
+            if isinstance(استجابة, dict):
+                قائمة_تعليقات.extend(استجابة.get("comments", []))
+        نتيجة = []
+        for ت in قائمة_تعليقات[:حد]:
+            م = ت.get("user", {})
+            عنصر = {
+                "text": ت.get("text"),
+                "likesCount": ت.get("digg_count") or ت.get("likesCount"),
+                "replyCount": ت.get("reply_comment_total") or ت.get("replyCount"),
+                "createTime": ت.get("create_time") or ت.get("createTime"),
+                "cid": ت.get("cid"),
+                "author": {
+                    "uniqueId": م.get("unique_id") or م.get("uniqueId"),
+                    "nickname": م.get("nickname"),
+                    "id": م.get("uid") or م.get("id"),
+                },
+                "replies": [],
+            }
+            if مع_الردود and عنصر["replyCount"] and عنصر["cid"]:
+                try:
+                    عنصر["replies"] = جمع_ردود(عنصر["cid"], معرّف_فيديو, مستخدم,
+                                               حد=min(عنصر["replyCount"], 20),
+                                               chromium_path=chromium_path)
+                except Exception: pass
+            نتيجة.append(عنصر)
+        متصفح.close()
+    return نتيجة
+
+def جمع_ردود(معرّف_تعليق, معرّف_فيديو, مستخدم, حد=20, chromium_path=None):
+    from playwright.sync_api import sync_playwright
+    مسؤول = {}
+    إطلاق = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]}
+    if _proxy: إطلاق["proxy"] = {"server": _proxy}
+    if chromium_path: إطلاق["executable_path"] = chromium_path
+    رابط = f"https://www.tiktok.com/@{مستخدم}/video/{معرّف_فيديو}?comment_id={معرّف_تعليق}"
+    with sync_playwright() as p:
+        متصفح = p.chromium.launch(**إطلاق)
+        سياق = متصفح.new_context(
+            user_agent=random.choice(وكلاء_المستخدم),
+            locale="ar-SA",
+            viewport={"width": 1280, "height": 2000},
+        )
+        صفحة = سياق.new_page()
+        def عند_رد(رد):
+            if "/api/comment/list/reply/" in رد.url:
+                try: مسؤول.setdefault("replies", []).append(رد.json())
+                except Exception: pass
+        صفحة.on("response", عند_رد)
+        صفحة.goto(رابط, wait_until="domcontentloaded", timeout=40000)
+        صفحة.wait_for_timeout(4000)
+        for _ in range(6):
+            صفحة.mouse.wheel(0, 2000)
+            صفحة.wait_for_timeout(1500)
+        ردود = []
+        for استجابة in مسؤول.get("replies", []):
+            if isinstance(استجابة, dict):
+                ردود.extend(استجابة.get("comments", []))
+        نتيجة = []
+        for ر in ردود[:حد]:
+            م = ر.get("user", {})
+            نتيجة.append({
+                "text": ر.get("text"),
+                "likesCount": ر.get("digg_count"),
+                "createTime": ر.get("create_time"),
+                "author": {
+                    "uniqueId": م.get("unique_id") or م.get("uniqueId"),
+                    "nickname": م.get("nickname"),
+                    "id": م.get("uid") or م.get("id"),
+                },
+            })
+        متصفح.close()
     return نتيجة
 
 def جمع_هاشتاج(اسم_وسم, حد=80, chromium_path=None):
@@ -340,10 +407,8 @@ def جمع_هاشتاج(اسم_وسم, حد=80, chromium_path=None):
         فيديوهات.append({
             "id": ع.get("id"), "desc": ع.get("desc"),
             "createTime": ع.get("createTime"),
-            "playCount": إ.get("playCount"),
-            "diggCount": إ.get("diggCount"),
-            "commentCount": إ.get("commentCount"),
-            "shareCount": إ.get("shareCount"),
+            "playCount": إ.get("playCount"), "diggCount": إ.get("diggCount"),
+            "commentCount": إ.get("commentCount"), "shareCount": إ.get("shareCount"),
             "author": {"uniqueId": م.get("uniqueId"), "nickname": م.get("nickname")},
         })
     return {
@@ -356,144 +421,854 @@ def جمع_هاشتاج(اسم_وسم, حد=80, chromium_path=None):
         "recentVideos": فيديوهات,
     }
 
-# ═══════════ الطباعة ═══════════
+def جمع_قائمة_متابعين(مستخدم, نوع="followers", حد=200, chromium_path=None):
+    from playwright.sync_api import sync_playwright
+    مسؤول = []
+    إطلاق = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]}
+    if _proxy: إطلاق["proxy"] = {"server": _proxy}
+    if chromium_path: إطلاق["executable_path"] = chromium_path
+    with sync_playwright() as p:
+        متصفح = p.chromium.launch(**إطلاق)
+        سياق = متصفح.new_context(
+            user_agent=random.choice(وكلاء_المستخدم),
+            locale="ar-SA",
+            viewport={"width": 1280, "height": 2000},
+        )
+        صفحة = سياق.new_page()
+        def عند_رد(رد):
+            if "/api/user/list/" in رد.url:
+                try: مسؤول.append(رد.json())
+                except Exception: pass
+        صفحة.on("response", عند_رد)
+        صفحة.goto(f"https://www.tiktok.com/@{مستخدم}?lang=ar",
+                   wait_until="domcontentloaded", timeout=40000)
+        صفحة.wait_for_timeout(3000)
+        try:
+            زر = صفحة.query_selector(f'[data-e2e="{نوع}-count"]')
+            if زر:
+                زر.click()
+                صفحة.wait_for_timeout(2500)
+        except Exception: pass
+        for _ in range(20):
+            صفحة.mouse.wheel(0, 2000)
+            صفحة.wait_for_timeout(1200)
+        قائمة = []
+        for استجابة in مسؤول:
+            if isinstance(استجابة, dict):
+                قائمة.extend(استجابة.get("userList", []))
+        مرئي = {}
+        for u in قائمة:
+            بيانات = u.get("user", u)
+            uid = بيانات.get("uniqueId")
+            if uid: مرئي[uid] = بيانات
+        متصفح.close()
+    نتيجة = []
+    for uid, بيانات in list(مرئي.items())[:حد]:
+        نتيجة.append({
+            "uniqueId": uid,
+            "nickname": بيانات.get("nickname"),
+            "id": بيانات.get("id"),
+            "region": بيانات.get("region"),
+            "signature": بيانات.get("signature"),
+            "verified": بيانات.get("verified"),
+            "avatar": بيانات.get("avatarLarger") or بيانات.get("avatarMedium"),
+        })
+    return نتيجة
 
-def طباعة_عربية(بيانات, عمق=0):
-    فراغ = "    " * عمق
-    for مفتاح, قيمة in بيانات.items():
-        اسم = الحقول.get(مفتاح, مفتاح)
-        if isinstance(قيمة, dict):
-            طبع(f"{فراغ}{اسم}:")
-            طباعة_عربية(قيمة, عمق + 1)
-        elif isinstance(قيمة, list):
-            if not قيمة: continue
-            طبع(f"\n{فراغ}──── {اسم} ({len(قيمة)}) ────")
-            for رقم, عنصر in enumerate(قيمة, 1):
-                طبع(f"\n{فراغ}  [{رقم}]")
-                if isinstance(عنصر, dict):
-                    طباعة_عربية(عنصر, عمق + 2)
+def استخراج_المنشن(نص):
+    if not نص: return []
+    return list(set(re.findall(r'@([A-Za-z0-9_.]{2,24})', نص)))
+
+أوزان_الإشارات = {
+    "متبادل": 15, "تعليق_متكرر": 20, "منشن_متكرر": 15,
+    "دويتو": 15, "ستيتش": 10, "نفس_المنطقة": 5,
+    "رد_على_تعليقه": 10, "ذكر_في_السيرة": 10, "تفاعل_متبادل": 10,
+}
+
+def درجة_الصلة(شخص_uid, بيانات):
+    مساهمات = []
+    مجموع = 0
+    if بيانات.get("متبادل"):
+        مساهمات.append({"إشارة": "متبادل", "نقاط": أوزان_الإشارات["متبادل"], "سبب": "يتابعك وتتابعه"})
+        مجموع += أوزان_الإشارات["متبادل"]
+    عدد_تعليقات = بيانات.get("عدد_التعليقات", 0)
+    if عدد_تعليقات >= 3:
+        نقاط = min(int(أوزان_الإشارات["تعليق_متكرر"] * (عدد_تعليقات / 30) ** 0.5 * 1.5), أوزان_الإشارات["تعليق_متكرر"])
+        نقاط = max(نقاط, 5)
+        مساهمات.append({"إشارة": "تعليق_متكرر", "نقاط": نقاط, "سبب": f"{عدد_تعليقات} تعليق عندك"})
+        مجموع += نقاط
+    عدد_منشن = بيانات.get("عدد_المنشن", 0)
+    if عدد_منشن >= 2:
+        نقاط = min(int(أوزان_الإشارات["منشن_متكرر"] * (عدد_منشن / 10) ** 0.5 * 1.5), أوزان_الإشارات["منشن_متكرر"])
+        نقاط = max(نقاط, 3)
+        مساهمات.append({"إشارة": "منشن_متكرر", "نقاط": نقاط, "سبب": f"{عدد_منشن} إشارة متبادلة"})
+        مجموع += نقاط
+    عدد_دويتو = بيانات.get("عدد_دويتو", 0)
+    if عدد_دويتو >= 1:
+        نقاط = min(أوزان_الإشارات["دويتو"] + (عدد_دويتو - 1) * 3, 25)
+        مساهمات.append({"إشارة": "دويتو", "نقاط": نقاط, "سبب": f"{عدد_دويتو} دويتو"})
+        مجموع += نقاط
+    عدد_ستيتش = بيانات.get("عدد_ستيتش", 0)
+    if عدد_ستيتش >= 1:
+        نقاط = min(أوزان_الإشارات["ستيتش"] + (عدد_ستيتش - 1) * 2, 20)
+        مساهمات.append({"إشارة": "ستيتش", "نقاط": نقاط, "سبب": f"{عدد_ستيتش} ستيتش"})
+        مجموع += نقاط
+    if بيانات.get("نفس_المنطقة"):
+        مساهمات.append({"إشارة": "نفس_المنطقة", "نقاط": أوزان_الإشارات["نفس_المنطقة"], "سبب": f"منطقة: {بيانات.get('المنطقة')}"})
+        مجموع += أوزان_الإشارات["نفس_المنطقة"]
+    عدد_ردود = بيانات.get("عدد_الردود_عليه", 0)
+    if عدد_ردود >= 2:
+        نقاط = min(3 + عدد_ردود, أوزان_الإشارات["رد_على_تعليقه"])
+        مساهمات.append({"إشارة": "رد_على_تعليقه", "نقاط": نقاط, "سبب": f"رددت عليه {عدد_ردود} مرة"})
+        مجموع += نقاط
+    if بيانات.get("في_السيرة"):
+        مساهمات.append({"إشارة": "ذكر_في_السيرة", "نقاط": أوزان_الإشارات["ذكر_في_السيرة"], "سبب": "مذكور في السيرة"})
+        مجموع += أوزان_الإشارات["ذكر_في_السيرة"]
+    if بيانات.get("تفاعل_متبادل"):
+        مساهمات.append({"إشارة": "تفاعل_متبادل", "نقاط": أوزان_الإشارات["تفاعل_متبادل"], "سبب": "تفاعل متبادل"})
+        مجموع += أوزان_الإشارات["تفاعل_متبادل"]
+    المجموع_الأقصى = sum(أوزان_الإشارات.values())
+    درجة = min(int((مجموع / المجموع_الأقصى) * 100), 100)
+    return درجة, مساهمات
+
+def تحليل_الشبكة(الهدف, متابعون, متابَعون, فيديوهات):
+    تحليل = {
+        "الهدف": الهدف,
+        "عدد_المتابعين": len(متابعون),
+        "عدد_المتابَعين": len(متابَعون),
+        "متبادلون": [],
+        "أعلى_المعلّقين": [],
+        "أكثر_المذكورين": [],
+        "شركاء_الدويتو": [],
+        "درجات_الصلة": [],
+        "المجموعات": [],
+    }
+    معرفات_متابعين = {u["uniqueId"] for u in متابعون if u.get("uniqueId")}
+    معرفات_متابَعين = {u["uniqueId"] for u in متابَعون if u.get("uniqueId")}
+    متبادل = معرفات_متابعين & معرفات_متابَعين
+    خريطة_متابعين = {u["uniqueId"]: u for u in متابعون if u.get("uniqueId")}
+    خريطة_متابَعين = {u["uniqueId"]: u for u in متابَعون if u.get("uniqueId")}
+    تحليل["متبادلون"] = [خريطة_متابعين[i] for i in متبادل]
+    عداد_تعليقات = {}
+    عداد_منشن_من_الهدف = {}
+    عداد_منشن_من_هم = {}
+    عداد_دويتو = {}
+    عداد_ستيتش = {}
+    عداد_ردود_الهدف_عليهم = {}
+    في_السيرة = set()
+    for م in استخراج_المنشن(الهدف.get("signature")):
+        في_السيرة.add(م)
+    تعليق_على_من = defaultdict(set)
+    for ف in فيديوهات:
+        for م in استخراج_المنشن(ف.get("desc")):
+            if م != الهدف.get("username"):
+                عداد_منشن_من_الهدف[م] = عداد_منشن_من_الهدف.get(م, 0) + 1
+        for ت in ف.get("comments", []):
+            uid = (ت.get("author") or {}).get("uniqueId")
+            if not uid or uid == الهدف.get("username"): continue
+            عداد_تعليقات[uid] = عداد_تعليقات.get(uid, 0) + 1
+            for م in استخراج_المنشن(ت.get("text")):
+                if م == الهدف.get("username"):
+                    عداد_منشن_من_هم[uid] = عداد_منشن_من_هم.get(uid, 0) + 1
                 else:
-                    طبع(f"{فراغ}      {عنصر}")
-        else:
-            v = "—" if قيمة is None else قيمة
-            طبع(f"{فراغ}{اسم:<18}: {v}")
+                    تعليق_على_من[uid].add(م)
+            for رد in ت.get("replies", []):
+                رد_uid = (رد.get("author") or {}).get("uniqueId")
+                if رد_uid == الهدف.get("username"):
+                    عداد_ردود_الهدف_عليهم[uid] = عداد_ردود_الهدف_عليهم.get(uid, 0) + 1
+        for ع in ف.get("علاقات", []):
+            ش = ع.get("مع")
+            if not ش or ش == الهدف.get("username"): continue
+            if ع.get("النوع") == "دويتو":
+                عداد_دويتو[ش] = عداد_دويتو.get(ش, 0) + 1
+            else:
+                عداد_ستيتش[ش] = عداد_ستيتش.get(ش, 0) + 1
+    مرشحون = set()
+    مرشحون.update(عداد_تعليقات)
+    مرشحون.update(عداد_منشن_من_الهدف)
+    مرشحون.update(عداد_منشن_من_هم)
+    مرشحون.update(عداد_دويتو)
+    مرشحون.update(عداد_ستيتش)
+    مرشحون.update(عداد_ردود_الهدف_عليهم)
+    مرشحون.update(في_السيرة)
+    مناطق_المتابعين = {u["uniqueId"]: u.get("region") for u in متابعون}
+    تحليل["أعلى_المعلّقين"] = sorted(
+        [{"uniqueId": k, "عدد": v} for k, v in عداد_تعليقات.items()],
+        key=lambda x: -x["عدد"]
+    )[:20]
+    تحليل["أكثر_المذكورين"] = sorted(
+        [{"uniqueId": k, "عدد": v} for k, v in {**عداد_منشن_من_الهدف, **عداد_منشن_من_هم}.items()],
+        key=lambda x: -x["عدد"]
+    )[:20]
+    تحليل["شركاء_الدويتو"] = sorted(
+        [{"uniqueId": k, "عدد": v} for k, v in {**عداد_دويتو, **عداد_ستيتش}.items()],
+        key=lambda x: -x["عدد"]
+    )[:20]
+    درجات = []
+    for uid in مرشحون:
+        بيانات = {
+            "متبادل": uid in متبادل,
+            "عدد_التعليقات": عداد_تعليقات.get(uid, 0),
+            "عدد_المنشن": عداد_منشن_من_الهدف.get(uid, 0) + عداد_منشن_من_هم.get(uid, 0),
+            "عدد_دويتو": عداد_دويتو.get(uid, 0),
+            "عدد_ستيتش": عداد_ستيتش.get(uid, 0),
+            "نفس_المنطقة": (مناطق_المتابعين.get(uid) == الهدف.get("region")) if الهدف.get("region") and مناطق_المتابعين.get(uid) else False,
+            "المنطقة": مناطق_المتابعين.get(uid) or "—",
+            "عدد_الردود_عليه": عداد_ردود_الهدف_عليهم.get(uid, 0),
+            "في_السيرة": uid in في_السيرة,
+            "تفاعل_متبادل": uid in عداد_تعليقات and عداد_منشن_من_هم.get(uid, 0) > 0,
+        }
+        درجة, مساهمات = درجة_الصلة(uid, بيانات)
+        if درجة > 0:
+            درجات.append({
+                "uniqueId": uid,
+                "nickname": (خريطة_متابعين.get(uid) or خريطة_متابَعين.get(uid) or {}).get("nickname"),
+                "درجة": درجة,
+                "مساهمات": مساهمات,
+            })
+    درجات.sort(key=lambda x: -x["درجة"])
+    تحليل["درجات_الصلة"] = درجات[:25]
+    مجموعات = defaultdict(list)
+    for شخص, يذكر in تعليق_على_من.items():
+        for هدف_منشن in يذكر:
+            if هدف_منشن in تعليق_على_من:
+                زوج = tuple(sorted([شخص, هدف_منشن]))
+                مجموعات[زوج].append(1)
+    تحليل["المجموعات"] = [
+        {"أ": a, "ب": b, "عدد_تبادل": len(v)}
+        for (a, b), v in مجموعات.items() if len(v) >= 2
+    ][:15]
+    return تحليل
 
-# ═══════════ الواجهة ═══════════
+def ملف_معلّق(uid, فيديوهات, مستخدم_الهدف):
+    تعليقاته = []
+    فيديوهات_علّق_عليها = {}
+    for ف in فيديوهات:
+        fid = ف.get("id")
+        وصف = (ف.get("desc") or "")[:80]
+        for ت in ف.get("comments", []):
+            مؤلف = (ت.get("author") or {})
+            if مؤلف.get("uniqueId") != uid: continue
+            ردود_الهدف = []
+            for رد in ت.get("replies", []):
+                if (رد.get("author") or {}).get("uniqueId") == مستخدم_الهدف:
+                    ردود_الهدف.append(رد.get("text"))
+            عنصر = {
+                "فيديو_id": fid, "فيديو_وصف": وصف,
+                "نص": ت.get("text"), "إعجابات": ت.get("likesCount"),
+                "ردود_عليه": ت.get("replyCount"), "وقت": ت.get("createTime"),
+                "رد_الهدف_عليه": ردود_الهدف if ردود_الهدف else None,
+            }
+            تعليقاته.append(عنصر)
+            if fid not in فيديوهات_علّق_عليها:
+                فيديوهات_علّق_عليها[fid] = {"id": fid, "وصف": وصف, "عدد_تعليقاته": 0, "تعليقاته_هنا": []}
+            فيديوهات_علّق_عليها[fid]["عدد_تعليقاته"] += 1
+            فيديوهات_علّق_عليها[fid]["تعليقاته_هنا"].append(ت.get("text"))
+    إجمالي_إعجابات = sum((ت.get("إعجابات") or 0) for t in تعليقاته)
+    عدد_ردود_الهدف = sum(1 for ت in تعليقاته if ت.get("رد_الهدف_عليه"))
+    أوقات = [ت["وقت"] for ت in تعليقاته if ت.get("وقت")]
+    النطاق_الزمني = (min(أوقات), max(أوقات)) if أوقات else None
+    إحصاءات = {
+        "uniqueId": uid,
+        "عدد_التعليقات": len(تعليقاته),
+        "عدد_الفيديوهات_المختلفة": len(فيديوهات_علّق_عليها),
+        "إجمالي_الإعجابات_على_تعليقاته": إجمالي_إعجابات,
+        "متوسط_الإعجابات_لكل_تعليق": round(إجمالي_إعجابات / len(تعليقاته), 1) if تعليقاته else 0,
+        "عدد_مرات_رد_الهدف_عليه": عدد_ردود_الهدف,
+        "نطاق_زمني": النطاق_الزمني,
+        "أكثر_فيديو_علّق_عليه": max(فيديوهات_علّق_عليها.values(), key=lambda x: x["عدد_تعليقاته"]) if فيديوهات_علّق_عليها else None,
+    }
+    return {
+        "الإحصاءات": إحصاءات,
+        "التعليقات_بالتفصيل": sorted(تعليقاته, key=lambda x: x.get("وقت") or 0, reverse=True),
+        "الفيديوهات_التي_علّق_عليها": sorted(فيديوهات_علّق_عليها.values(), key=lambda x: -x["عدد_تعليقاته"]),
+    }
+
+كلمات_إيجابية = {"رهيب","رائع","حلو","جميل","ممتاز","شكرا","مبروك","أحبك","حبيبي","قوي","مبدع","عظيم","أفضل","نجاح","فخر","الله","يبارك","يسعدك","تستاهل","ابداع","كفو","زين","طيب","عسل"}
+كلمات_سلبية = {"سيء","زفت","خرا","مقرف","سخيف","فاشل","كره","تكره","مزعج","سامج","تعبت","ملل","قبيح","سيئه","ضعيف","ممل","خايس","بايعها","انقلع"}
+
+def نبرة_نص(نص):
+    if not نص: return 0
+    إيج = sum(1 for ك in كلمات_إيجابية if ك in نص)
+    سل = sum(1 for ك in كلمات_سلبية if ك in نص)
+    return إيج - سل
+
+def تحليل_نبرة(فيديوهات):
+    مجموع = 0
+    إيجابي = 0
+    سلبي = 0
+    محايد = 0
+    for ف in فيديوهات:
+        for ت in ف.get("comments", []):
+            ن = نبرة_نص(ت.get("text"))
+            مجموع += ن
+            if ن > 0: إيجابي += 1
+            elif ن < 0: سلبي += 1
+            else: محايد += 1
+    الإجمالي = إيجابي + سلبي + محايد
+    return {
+        "إيجابي": إيجابي, "سلبي": سلبي, "محايد": محايد,
+        "النسبة_الإيجابية": round(إيجابي / الإجمالي * 100, 1) if الإجمالي else 0,
+        "النسبة_السلبية": round(سلبي / الإجمالي * 100, 1) if الإجمالي else 0,
+        "الدرجة_العامة": "إيجابي" if مجموع > 0 else ("سلبي" if مجموع < 0 else "محايد"),
+    }
+
+def تحليل_أوقات(فيديوهات, مستخدم_الهدف):
+    خريطة = defaultdict(int)
+    نطاقات = defaultdict(int)
+    for ف in فيديوهات:
+        for ت in ف.get("comments", []):
+            if (ت.get("author") or {}).get("uniqueId") != مستخدم_الهدف: continue
+            وقت = ت.get("createTime")
+            if not وقت: continue
+            try:
+                dt = datetime.fromtimestamp(وقت)
+                خريطة[dt.hour] += 1
+                if dt.hour < 6: نطاقات["فجر"] += 1
+                elif dt.hour < 12: نطاقات["صباح"] += 1
+                elif dt.hour < 18: نطاقات["ظهر"] += 1
+                else: نطاقات["مساء"] += 1
+            except Exception: pass
+    return {"خريطة_الساعات": dict(خريطة), "النطاقات": dict(نطاقات)}
+
+def كشف_وهمي(متابعون):
+    نتائج = []
+    for u in متابعون:
+        علامات = []
+        نقاط = 0
+        nickname = (u.get("nickname") or "")
+        if len(nickname) < 3 or re.match(r'^[a-z0-9_]{8,}$', nickname, re.I):
+            علامات.append("اسم عشوائي"); نقاط += 25
+        if not u.get("avatar"):
+            علامات.append("بلا صورة"); نقاط += 20
+        if not u.get("signature"):
+            علامات.append("بلا سيرة"); نقاط += 10
+        if u.get("verified") is False:
+            نقاط += 5
+        if نقاط >= 30:
+            نتائج.append({
+                "uniqueId": u.get("uniqueId"),
+                "nickname": nickname,
+                "احتمال_وهمي": min(نقاط, 95),
+                "علامات": علامات,
+            })
+    نتائج.sort(key=lambda x: -x["احتمال_وهمي"])
+    return نتائج[:30]
+
+def ملف_فردي_كامل(uid, فيديوهات, مستخدم_الهدف, متابعون=None, متابَعون=None):
+    ملف = ملف_معلّق(uid, فيديوهات, مستخدم_الهدف)
+    إحصاءات_تعليقات = ملف["الإحصاءات"]
+    منشن_هو_لهم = {}
+    عدد_منشن_للهدف = 0
+    for ت in ملف["التعليقات_بالتفصيل"]:
+        for م in استخراج_المنشن(ت["نص"]):
+            if م == مستخدم_الهدف:
+                عدد_منشن_للهدف += 1
+            else:
+                منشن_هو_لهم[م] = منشن_هو_لهم.get(م, 0) + 1
+    منشن_هو_لهم = sorted([{"uniqueId": k, "عدد": v} for k, v in منشن_هو_لهم.items()], key=lambda x: -x["عدد"])
+    من_يذكره = {}
+    for ف in فيديوهات:
+        for ت in ف.get("comments", []):
+            مؤلف = (ت.get("author") or {}).get("uniqueId")
+            if not مؤلف or مؤلف == uid: continue
+            if uid in استخراج_المنشن(ت.get("text")):
+                من_يذكره[مؤلف] = من_يذكره.get(مؤلف, 0) + 1
+    من_يذكره = sorted([{"uniqueId": k, "عدد": v} for k, v in من_يذكره.items()], key=lambda x: -x["عدد"])
+    بيانات_الصلة = {
+        "متبادل": False, "عدد_التعليقات": إحصاءات_تعليقات["عدد_التعليقات"],
+        "عدد_المنشن": عدد_منشن_للهدف, "عدد_دويتو": 0, "عدد_ستيتش": 0,
+        "نفس_المنطقة": False, "المنطقة": "—",
+        "عدد_الردود_عليه": إحصاءات_تعليقات["عدد_مرات_رد_الهدف_عليه"],
+        "في_السيرة": False, "تفاعل_متبادل": False,
+    }
+    درجة, مساهمات = درجة_الصلة(uid, بيانات_الصلة)
+    كلمات = {}
+    for ت in ملف["التعليقات_بالتفصيل"]:
+        نص = (ت["نص"] or "").lower()
+        for ك in re.findall(r'[\u0600-\u06FF]{3,}', نص):
+            if ك in ("على","الى","إلى","هذا","هذه","كان","كانت","اللي","التي","الذي"): continue
+            كلمات[ك] = كلمات.get(ك, 0) + 1
+    أكثر_كلمات = sorted([{"كلمة": k, "عدد": v} for k, v in كلمات.items() if v >= 2], key=lambda x: -x["عدد"])[:15]
+    أوقات = تحليل_أوقات([ف for ف in فيديوهات if any((ت.get("author") or {}).get("uniqueId") == uid for ت in ف.get("comments", []))], uid)
+    return {
+        "الهدف": مستخدم_الهدف, "الشخص": uid,
+        "درجة_الصلة": درجة, "مساهمات_الدرجة": مساهمات,
+        "إحصاءات": إحصاءات_تعليقات, "ملف": ملف,
+        "منشن_هو_لهم": منشن_هو_لهم, "من_يذكره": من_يذكره,
+        "عدد_منشن_للهدف": عدد_منشن_للهدف,
+        "أكثر_كلمات": أكثر_كلمات, "أوقات_نشاط": أوقات,
+    }
+
+def حفظ_أرشيف(بيانات, اسم):
+    try:
+        os.makedirs(مجلد_الأرشيف, exist_ok=True)
+        نظيف = re.sub(r'[^A-Za-z0-9_\-]', '_', اسم.lstrip("@#"))
+        ختم = datetime.now().strftime("%Y%m%d_%H%M%S")
+        مسار = os.path.join(مجلد_الأرشيف, f"{نظيف}_{ختم}.json")
+        with open(مسار, "w", encoding="utf-8") as f:
+            json.dump(بيانات, f, ensure_ascii=False, indent=2)
+        return مسار
+    except Exception:
+        return None
+
+CSS = """
+:root { --bg:#0a0a0f; --fg:#e8e8ea; --acc:#00e5a0; --muted:#888; --card:#15151c; --border:#2a2a3a; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Segoe UI','Tahoma',sans-serif; background:var(--bg); color:var(--fg); padding:24px; line-height:1.7; direction:rtl; }
+.container { max-width:1200px; margin:0 auto; }
+.header { text-align:center; padding:30px 20px; border-bottom:2px solid var(--acc); margin-bottom:30px; }
+.header h1 { font-size:36px; color:var(--acc); letter-spacing:2px; }
+.header .team { font-size:16px; color:var(--muted); margin-top:8px; }
+.header .meta { font-size:13px; color:var(--muted); margin-top:12px; }
+h2 { color:var(--acc); font-size:22px; margin:32px 0 16px 0; padding-bottom:8px; border-bottom:1px solid var(--border); }
+h3 { color:var(--fg); font-size:16px; margin:20px 0 10px 0; }
+.card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:20px; margin-bottom:16px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:14px; }
+.stat { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; text-align:center; }
+.stat .val { font-size:28px; color:var(--acc); font-weight:700; }
+.stat .lbl { font-size:13px; color:var(--muted); margin-top:4px; }
+table { width:100%; border-collapse:collapse; margin:10px 0; font-size:14px; }
+th { background:var(--card); color:var(--acc); padding:12px; text-align:right; border-bottom:1px solid var(--border); }
+td { padding:10px 12px; border-bottom:1px solid var(--border); }
+tr:hover { background:var(--card); }
+.badge { display:inline-block; padding:3px 10px; border-radius:12px; font-size:12px; font-weight:600; }
+.badge.pos { background:rgba(0,229,160,.15); color:var(--acc); }
+.badge.neg { background:rgba(255,80,80,.15); color:#ff5050; }
+.badge.warn { background:rgba(255,200,0,.15); color:#ffc800; }
+.bar { background:var(--border); height:8px; border-radius:4px; overflow:hidden; margin-top:6px; }
+.bar-fill { background:var(--acc); height:100%; }
+.pct { color:var(--acc); font-weight:700; font-size:20px; }
+.comment { background:var(--card); border-right:3px solid var(--acc); padding:12px 16px; margin:10px 0; border-radius:0 8px 8px 0; }
+.comment .time { font-size:12px; color:var(--muted); }
+.comment .video { font-size:12px; color:var(--muted); margin-top:4px; }
+.comment .reply { margin-top:8px; padding-right:20px; border-right:2px solid var(--border); font-size:13px; color:var(--muted); }
+.footer { text-align:center; padding:30px; color:var(--muted); font-size:12px; border-top:1px solid var(--border); margin-top:40px; }
+"""
+
+def توليد_HTML(بيانات, نوع="ملف"):
+    الآن = datetime.now().strftime("%Y-%m-%d %H:%M")
+    h = f"""<!DOCTYPE html>
+<html lang="ar" dir="rtl"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{الأداة} — {نوع}</title><style>{CSS}</style></head>
+<body><div class="container">
+<div class="header">
+<h1>{الأداة}</h1>
+<div class="team">{الفريق}</div>
+<div class="meta">{نوع} · {الآن}</div>
+</div>
+"""
+    if نوع == "ملف حساب":
+        h += ملف_html(بيانات)
+    elif نوع == "شبكة":
+        h += شبكة_html(بيانات)
+    elif نوع == "فردي":
+        h += فردي_html(بيانات)
+    elif نوع == "هاشتاج":
+        h += هاشتاج_html(بيانات)
+    elif نوع == "مقارنة":
+        h += مقارنة_html(بيانات)
+    h += f'<div class="footer">{الأداة} · {الفريق} · v{الإصدار}</div></div></body></html>'
+    return h
+
+def ملف_html(بيانات):
+    h = f'<h2>ملف @{بيانات.get("username","")}</h2><div class="grid">'
+    for مفتاح, قيمة in بيانات.items():
+        if مفتاح in ("recentVideos","comments","replies"): continue
+        اسم = الحقول.get(مفتاح, مفتاح)
+        v = "—" if قيمة is None else str(قيمة)
+        if isinstance(قيمة, bool): v = "نعم" if قيمة else "لا"
+        if isinstance(قيمة, int) and مفتاح in ("followers","following","likes","videos"):
+            v = f"{قيمة:,}"
+        h += f'<div class="stat"><div class="val">{v}</div><div class="lbl">{اسم}</div></div>'
+    h += '</div>'
+    فيديوهات = بيانات.get("recentVideos", [])
+    if فيديوهات:
+        h += f'<h2>الفيديوهات ({len(فيديوهات)})</h2>'
+        h += '<table><tr><th>الوصف</th><th>مشاهدات</th><th>إعجابات</th><th>تعليقات</th><th>مشاركات</th></tr>'
+        for ف in فيديوهات:
+            h += f'<tr><td>{(ف.get("desc") or "—")[:80]}</td><td>{ف.get("playCount",0):,}</td><td>{ف.get("diggCount",0):,}</td><td>{ف.get("commentCount",0):,}</td><td>{ف.get("shareCount",0):,}</td></tr>'
+        h += '</table>'
+        تعليقات_كلها = []
+        for ف in فيديوهات:
+            for ت in ف.get("comments", []):
+                تعليقات_كلها.append((ف, ت))
+        if تعليقات_كلها:
+            h += f'<h2>التعليقات ({len(تعليقات_كلها)})</h2>'
+            for ف, ت in تعليقات_كلها[:100]:
+                مؤلف = (ت.get("author") or {}).get("uniqueId", "—")
+                h += f'<div class="comment"><strong>@{مؤلف}</strong><br>{ت.get("text","")}<div class="video">{(ف.get("desc") or "")[:60]} · {ت.get("likesCount",0)} إعجاب</div>'
+                for ر in ت.get("replies", []):
+                    رد_مؤلف = (ر.get("author") or {}).get("uniqueId", "—")
+                    h += f'<div class="reply">↳ @{رد_مؤلف}: {ر.get("text","")}</div>'
+                h += '</div>'
+    return h
+
+def شبكة_html(بيانات):
+    h = '<h2>تحليل الشبكة</h2><div class="grid">'
+    h += f'<div class="stat"><div class="val">{بيانات["عدد_المتابعين"]}</div><div class="lbl">متابعون</div></div>'
+    h += f'<div class="stat"><div class="val">{بيانات["عدد_المتابَعين"]}</div><div class="lbl">يتابع</div></div>'
+    h += f'<div class="stat"><div class="val">{len(بيانات["متبادلون"])}</div><div class="lbl">متبادلون</div></div>'
+    h += '</div>'
+    if بيانات["درجات_الصلة"]:
+        h += '<h2>درجة الصلة</h2>'
+        for م in بيانات["درجات_الصلة"][:20]:
+            h += f'<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><strong>@{م["uniqueId"]}</strong><span class="pct">{م["درجة"]}%</span></div><div class="bar"><div class="bar-fill" style="width:{م["درجة"]}%"></div></div>'
+            for س in م["مساهمات"]:
+                h += f'<div style="font-size:13px;color:var(--muted);margin-top:4px">· {س["إشارة"]} +{س["نقاط"]} — {س["سبب"]}</div>'
+            h += '</div>'
+    if بيانات["المجموعات"]:
+        h += '<h2>المجموعات المكتشفة</h2><table><tr><th>أ</th><th>ب</th><th>تبادل</th></tr>'
+        for م in بيانات["المجموعات"]:
+            h += f'<tr><td>@{م["أ"]}</td><td>@{م["ب"]}</td><td>{م["عدد_تبادل"]}</td></tr>'
+        h += '</table>'
+    return h
+
+def فردي_html(بيانات):
+    h = f'<h2>تقرير فردي: @{بيانات["الشخص"]}</h2>'
+    درجة = بيانات["درجة_الصلة"]
+    h += f'<div class="card"><div style="display:flex;justify-content:space-between"><span>درجة الصلة</span><span class="pct">{درجة}%</span></div><div class="bar"><div class="bar-fill" style="width:{درجة}%"></div></div>'
+    for س in بيانات["مساهمات_الدرجة"]:
+        h += f'<div style="font-size:13px;color:var(--muted);margin-top:4px">· {س["إشارة"]} +{س["نقاط"]} — {س["سبب"]}</div>'
+    h += '</div>'
+    إ = بيانات["إحصاءات"]
+    h += '<div class="grid">'
+    h += f'<div class="stat"><div class="val">{إ["عدد_التعليقات"]}</div><div class="lbl">تعليقات</div></div>'
+    h += f'<div class="stat"><div class="val">{إ["عدد_الفيديوهات_المختلفة"]}</div><div class="lbl">فيديوهات</div></div>'
+    h += f'<div class="stat"><div class="val">{إ["إجمالي_الإعجابات_على_تعليقاته"]}</div><div class="lbl">إعجابات</div></div>'
+    h += f'<div class="stat"><div class="val">{إ["عدد_مرات_رد_الهدف_عليه"]}</div><div class="lbl">ردود الهدف</div></div>'
+    h += '</div>'
+    if بيانات["منشن_هو_لهم"]:
+        h += '<h3>يذكرهم</h3><div class="grid">'
+        for م in بيانات["منشن_هو_لهم"][:10]:
+            h += f'<div class="stat"><div class="val">{م["عدد"]}</div><div class="lbl">@{م["uniqueId"]}</div></div>'
+        h += '</div>'
+    if بيانات["من_يذكره"]:
+        h += '<h3>يذكرونه</h3><div class="grid">'
+        for م in بيانات["من_يذكره"][:10]:
+            h += f'<div class="stat"><div class="val">{م["عدد"]}</div><div class="lbl">@{م["uniqueId"]}</div></div>'
+        h += '</div>'
+    if بيانات["أكثر_كلمات"]:
+        h += '<h3>أكثر الكلمات</h3><div class="grid">'
+        for ك in بيانات["أكثر_كلمات"][:12]:
+            h += f'<div class="stat"><div class="val">{ك["عدد"]}</div><div class="lbl">{ك["كلمة"]}</div></div>'
+        h += '</div>'
+    ملف = بيانات["ملف"]
+    if ملف["التعليقات_بالتفصيل"]:
+        h += f'<h2>كل تعليقاته ({len(ملف["التعليقات_بالتفصيل"])})</h2>'
+        for ت in ملف["التعليقات_بالتفصيل"][:100]:
+            وقت = ""
+            if ت.get("وقت"):
+                try: وقت = datetime.fromtimestamp(ت["وقت"]).strftime("%Y-%m-%d %H:%M")
+                except: pass
+            h += f'<div class="comment"><div class="time">{وقت}</div>{ت["نص"]}<div class="video">{ت["فيديو_وصف"]} · {ت.get("إعجابات",0)} إعجاب</div>'
+            if ت.get("رد_الهدف_عليه"):
+                for ر in ت["رد_الهدف_عليه"]:
+                    h += f'<div class="reply">↳ الهدف: {ر}</div>'
+            h += '</div>'
+    return h
+
+def هاشتاج_html(بيانات):
+    و = بيانات["hashtag"]
+    h = f'<h2>#{و["challengeName"]}</h2><div class="grid">'
+    h += f'<div class="stat"><div class="val">{و.get("viewCount") or 0:,}</div><div class="lbl">مشاهدات</div></div>'
+    h += f'<div class="stat"><div class="val">{و.get("videoCount") or 0:,}</div><div class="lbl">فيديوهات</div></div>'
+    h += '</div>'
+    if بيانات.get("recentVideos"):
+        h += '<h2>الفيديوهات</h2><table><tr><th>الوصف</th><th>الكاتب</th><th>مشاهدات</th></tr>'
+        for ف in بيانات["recentVideos"]:
+            h += f'<tr><td>{(ف.get("desc") or "—")[:70]}</td><td>@{(ف.get("author") or {}).get("uniqueId","—")}</td><td>{ف.get("playCount",0):,}</td></tr>'
+        h += '</table>'
+    return h
+
+def مقارنة_html(بيانات):
+    h = '<h2>مقارنة حسابين</h2>'
+    h += f'<div class="grid"><div class="stat"><div class="val">@{بيانات["أ"]["username"]}</div><div class="lbl">الأول</div></div><div class="stat"><div class="val">@{بيانات["ب"]["username"]}</div><div class="lbl">الثاني</div></div></div>'
+    h += '<h2>الإحصاءات</h2><table><tr><th>الحقل</th><th>@' + بيانات["أ"]["username"] + '</th><th>@' + بيانات["ب"]["username"] + '</th></tr>'
+    for حقل in ("followers","following","likes","videos"):
+        h += f'<tr><td>{الحقول.get(حقل,حقل)}</td><td>{بيانات["أ"].get(حقل,0):,}</td><td>{بيانات["ب"].get(حقل,0):,}</td></tr>'
+    h += '</table>'
+    if بيانات.get("علاقات"):
+        h += '<h2>العلاقات</h2><table><tr><th>النوع</th><th>التفصيل</th></tr>'
+        for ع in بيانات["علاقات"]:
+            h += f'<tr><td>{ع["النوع"]}</td><td>{ع["التفصيل"]}</td></tr>'
+        h += '</table>'
+    return h
+
+def توليد_PDF(html, مسار):
+    try:
+        from playwright.sync_api import sync_playwright
+        مسار_مؤقت = مسار.replace(".pdf", ".html")
+        with open(مسار_مؤقت, "w", encoding="utf-8") as f:
+            f.write(html)
+        with sync_playwright() as p:
+            متصفح = p.chromium.launch(headless=True, args=["--no-sandbox"])
+            صفحة = متصفح.new_page()
+            صفحة.goto(f"file://{os.path.abspath(مسار_مؤقت)}", wait_until="networkidle")
+            صفحة.pdf(path=مسار, format="A4", print_background=True,
+                    margin={"top":"15mm","bottom":"15mm","left":"15mm","right":"15mm"})
+            متصفح.close()
+        try: os.remove(مسار_مؤقت)
+        except: pass
+        return True
+    except Exception as e:
+        خطأ(f"PDF: {e}")
+        return False
+
+def حفظ_نتيجة(بيانات, نوع, هدف, صيغة="html"):
+    os.makedirs(مجلد_المخرجات, exist_ok=True)
+    html = توليد_HTML(بيانات, نوع)
+    نظيف = re.sub(r'[^A-Za-z0-9_\-]', '_', هدف.lstrip("@#"))
+    ختم = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if صيغة == "pdf":
+        مسار = os.path.join(مجلد_المخرجات, f"{نظيف}_{نوع}_{ختم}.pdf")
+        if توليد_PDF(html, مسار):
+            return مسار
+        تحذير("PDF فشل — حفظ HTML")
+    مسار = os.path.join(مجلد_المخرجات, f"{نظيف}_{نوع}_{ختم}.html")
+    with open(مسار, "w", encoding="utf-8") as f:
+        f.write(html)
+    return مسار
+
+def عرض_ملخص_فردي(بيانات):
+    طبع()
+    عنوان(f"تقرير: @{بيانات['الشخص']}")
+    طبع(f"  درجة الصلة: {أبيض}{بيانات['درجة_الصلة']}%{صفر}")
+    for س in بيانات["مساهمات_الدرجة"]:
+        طبع(f"    {باهت}·{صفر} {س['إشارة']:<15} {أخضر}+{س['نقاط']:<3}{صفر} {س['سبب']}")
+    إ = بيانات["إحصاءات"]
+    طبع()
+    طبع(f"  التعليقات: {إ['عدد_التعليقات']} · الفيديوهات: {إ['عدد_الفيديوهات_المختلفة']} · ردود الهدف: {إ['عدد_مرات_رد_الهدف_عليه']}")
+
+def عرض_ملخص_شبكة(بيانات):
+    طبع()
+    عنوان("تحليل الشبكة")
+    طبع(f"  متابعون: {بيانات['عدد_المتابعين']} · يتابع: {بيانات['عدد_المتابَعين']} · متبادل: {len(بيانات['متبادلون'])}")
+    if بيانات["درجات_الصلة"]:
+        طبع(f"\n  {أبيض}أعلى صلة:{صفر}")
+        for م in بيانات["درجات_الصلة"][:10]:
+            شريط = "█" * (م["درجة"] // 5) + "░" * (20 - م["درجة"] // 5)
+            طبع(f"    @{م['uniqueId']:<20} {أبيض}{م['درجة']:>3}%{صفر}  {شريط}")
+
+def اختيار_صيغة():
+    print()
+    طبع(f"  {أبيض}[1]{صفر} HTML")
+    طبع(f"  {أبيض}[2]{صفر} PDF")
+    طبع(f"  {أبيض}[3]{صفر} كلاهما")
+    خ = سؤال("صيغة الإخراج", "1")
+    return {"1":"html","2":"pdf","3":"both"}.get(خ, "html")
 
 def الرئيسية():
+    os.system("clear" if os.name != "nt" else "cls")
     طبع(الشعار)
+    playwright_جاهز, chromium_path = تهيئة_بيئة()
 
-    # ── التهيئة الصامتة ──
-    مطوّر = "--تطوير" in sys.argv or "-d" in sys.argv
-    playwright_جاهز = False
-    chromium_path = None
-
-    if playwright_متاح() or chromium_متاح():
-        playwright_جاهز, chromium_path = تهيئة_بيئة()
-    else:
-        # صامت: جرّب التهيئة بلا إعلان
-        playwright_جاهز, chromium_path = تهيئة_بيئة()
-
-    الهدف = سؤال("أدخل الهدف (@اسم أو #هاشتاج)")
-    if not الهدف:
-        خطأ("لم يُدخل هدف"); return 1
-
-    وسم = الهدف.startswith("#")
-    print()
-    if وسم:
-        if not playwright_جاهز:
-            معلومة("بيئة التصفح غير متاحة على هذا الجهاز — سيُستخدم HTML فقط")
-            طبع(بند(1, "هاشتاج فقط (محدود)"))
-        else:
-            طبع(بند(1, "هاشتاج فقط"))
-            طبع(بند(2, "هاشتاج + فيديوهات"))
-    else:
-        طبع(بند(1, "ملف فقط"))
-        if playwright_جاهز:
-            طبع(بند(2, "ملف + فيديوهات"))
-            طبع(بند(3, "ملف + فيديوهات + تعليقات"))
-        else:
-            طبع(بند(2, "ملف + فيديوهات (محدود)"))
+    عنوان("القائمة الرئيسية")
+    طبع(بند(1, "ملف حساب"))
+    طبع(بند(2, "ملف + فيديوهات"))
+    طبع(بند(3, "ملف + فيديوهات + تعليقات + ردود"))
+    if playwright_جاهز:
+        طبع(بند(4, "تحليل شبكة (متابعون/متابَعون/درجة صلة)"))
+        طبع(بند(5, "تقرير فردي (أعلى صلة أو اختيار يدوي)"))
+    طبع(بند(6, "هاشتاج"))
+    طبع(بند(7, "مقارنة حسابين"))
+    طبع(بند(8, "إعدادات (بروكسي)"))
     طبع(بند(0, "خروج"))
     print()
 
-    الاختيار = سؤال("اختر الرقم", "1")
+    الاختيار = سؤال("اختر", "1")
     if الاختيار == "0": return 0
 
-    عدد_فيديوهات = 0
-    عدد_تعليقات = 0
-    if not وسم:
-        if الاختيار in ("2", "3"):
-            عدد_فيديوهات = int(سؤال("كم فيديو", "20"))
-        if الاختيار == "3":
-            عدد_تعليقات = int(سؤال("كم تعليق لكل فيديو", "50"))
-    else:
-        if الاختيار == "2":
-            عدد_فيديوهات = int(سؤال("كم فيديو من الوسم", "40"))
+    if الاختيار == "8":
+        عنوان("إعدادات")
+        ب = سؤال("بروكسي (مثال socks5://127.0.0.1:9050 — فراغ لإلغاء)", "")
+        ضبط_البروكسي(ب.strip() or None)
+        نجاح(f"البروكسي: {ب or 'معطّل'}")
+        return 0
 
-    تصدير_json = سؤال("تصدير JSON؟ (ن/ي)", "ن").lower() in ("ي", "y", "yes")
-    ملف_حفظ = سؤال("حفظ إلى ملف (فراغ = لا)", "")
+    if الاختيار == "7":
+        عنوان("مقارنة حسابين")
+        أ_اسم = سؤال("الحساب الأول (@)").lstrip("@").strip()
+        ب_اسم = سؤال("الحساب الثاني (@)").lstrip("@").strip()
+        if not أ_اسم or not ب_اسم:
+            خطأ("اسم فارغ"); return 1
+        معلومة(f"جلب @{أ_اسم} ...")
+        try:
+            html_أ = جلب_بسيط(f"https://www.tiktok.com/@{أ_اسم}")
+            ملف_أ = تحليل_ملف(استخراج_حالة(html_أ), أ_اسم)
+            معلومة(f"جلب @{ب_اسم} ...")
+            html_ب = جلب_بسيط(f"https://www.tiktok.com/@{ب_اسم}")
+            ملف_ب = تحليل_ملف(استخراج_حالة(html_ب), ب_اسم)
+        except Exception as e:
+            خطأ(str(e)); return 2
+        علاقات = []
+        if playwright_جاهز:
+            معلومة("كشف العلاقات ...")
+            try:
+                متابعو_أ = {u["uniqueId"] for u in جمع_قائمة_متابعين(أ_اسم, "followers", 100, chromium_path)}
+                متابعو_ب = {u["uniqueId"] for u in جمع_قائمة_متابعين(ب_اسم, "followers", 100, chromium_path)}
+                متبادل = متابعو_أ & متابعو_ب
+                if متبادل:
+                    علاقات.append({"النوع": "متابعون مشتركون", "التفصيل": f"{len(متبادل)}: " + ", ".join(list(متبادل)[:10])})
+            except Exception as e:
+                تحذير(f"العلاقات: {e}")
+        بيانات = {"أ": ملف_أ, "ب": ملف_ب, "علاقات": علاقات}
+        صيغة = اختيار_صيغة()
+        if صيغة in ("html","both"):
+            مسار = حفظ_نتيجة(بيانات, "مقارنة", f"{أ_اسم}_vs_{ب_اسم}", "html")
+            نجاح(f"HTML: {مسار}")
+        if صيغة in ("pdf","both"):
+            مسار = حفظ_نتيجة(بيانات, "مقارنة", f"{أ_اسم}_vs_{ب_اسم}", "pdf")
+            نجاح(f"PDF: {مسار}")
+        حفظ_أرشيف(بيانات, f"مقارنة_{أ_اسم}_{ب_اسم}")
+        return 0
 
-    النتيجة = {"الفريق": الفريق, "الإصدار": الإصدار}
+    عنوان("الهدف")
+    الهدف = سؤال("أدخل @اسم أو #هاشتاج")
+    if not الهدف:
+        خطأ("فارغ"); return 1
+    وسم = الهدف.startswith("#")
 
-    # ── التنفيذ مع تجاوز صامت ──
-    try:
-        if وسم:
-            if playwright_جاهز:
-                معلومة(f"اعتراض تدفق الوسم {الهدف} ...")
-                try:
-                    النتيجة["hashtag"] = جمع_هاشتاج(الهدف, حد=max(عدد_فيديوهات, 40), chromium_path=chromium_path)
-                except Exception:
-                    معلومة("تعذّر التصفح — تراجع إلى HTML المحدود")
-                    raise RuntimeError("الوسم يتطلب متصفحاً")
-            else:
-                raise RuntimeError("الوسم يتطلب متصفحاً — Playwright/Chromium غير متاح")
-        else:
-            مستخدم = الهدف.lstrip("@").strip()
-            معلومة(f"سحب ملف @{مستخدم} ...")
+    if الاختيار == "6" or وسم:
+        if not playwright_جاهز:
+            خطأ("الهاشتاج يتطلب Playwright/Chromium"); return 1
+        معلومة(f"اعتراض تدفق #{الهدف.lstrip('#')} ...")
+        try:
+            بيانات = جمع_هاشتاج(الهدف, حد=80, chromium_path=chromium_path)
+        except Exception as e:
+            خطأ(str(e)); return 2
+        صيغة = اختيار_صيغة()
+        if صيغة in ("html","both"):
+            مسار = حفظ_نتيجة(بيانات, "هاشتاج", الهدف, "html"); نجاح(f"HTML: {مسار}")
+        if صيغة in ("pdf","both"):
+            مسار = حفظ_نتيجة(بيانات, "هاشتاج", الهدف, "pdf"); نجاح(f"PDF: {مسار}")
+        حفظ_أرشيف(بيانات, الهدف)
+        return 0
+
+    مستخدم = الهدف.lstrip("@").strip()
+
+    if الاختيار == "1":
+        معلومة(f"سحب @{مستخدم} ...")
+        try:
             html = جلب_بسيط(f"https://www.tiktok.com/@{مستخدم}")
-            حالة = استخراج_حالة(html)
-            النتيجة.update(تحليل_ملف(حالة, مستخدم))
+            بيانات = تحليل_ملف(استخراج_حالة(html), مستخدم)
+        except Exception as e:
+            خطأ(str(e)); return 2
+        صيغة = اختيار_صيغة()
+        if صيغة in ("html","both"):
+            مسار = حفظ_نتيجة(بيانات, "ملف حساب", مستخدم, "html"); نجاح(f"HTML: {مسار}")
+        if صيغة in ("pdf","both"):
+            مسار = حفظ_نتيجة(بيانات, "ملف حساب", مستخدم, "pdf"); نجاح(f"PDF: {مسار}")
+        حفظ_أرشيف(بيانات, مستخدم)
+        return 0
 
-            if عدد_فيديوهات > 0:
-                if playwright_جاهز:
-                    معلومة(f"اعتراض {عدد_فيديوهات} فيديو ...")
-                    try:
-                        فيديوهات = جمع_فيديوهات_عميق(مستخدم, حد=عدد_فيديوهات, chromium_path=chromium_path)
-                        if فيديوهات:
-                            النتيجة["recentVideos"] = فيديوهات
-                    except Exception:
-                        معلومة("تعذّر اعتراض الفيديوهات — استخدام ما في الصفحة")
-                else:
-                    if len(النتيجة.get("recentVideos", [])) < عدد_فيديوهات:
-                        معلومة(f"البيئة محدودة — {len(النتيجة.get('recentVideos', []))} فيديو من HTML")
+    if الاختيار in ("2","3","4","5"):
+        if not playwright_جاهز:
+            تحذير("وضع محدود")
+        عدد_فيديوهات = int(سؤال("كم فيديو", "25"))
+        عدد_تعليقات = 100
+        if الاختيار in ("3","4","5"):
+            عدد_تعليقات = int(سؤال("كم تعليق/فيديو", "100"))
 
-            if عدد_تعليقات > 0 and النتيجة.get("recentVideos") and playwright_جاهز:
-                معلومة("سحب التعليقات ...")
-                for ف in النتيجة["recentVideos"]:
-                    try:
-                        ف["comments"] = جمع_تعليقات_فيديو(مستخدم, ف["id"], حد=عدد_تعليقات, chromium_path=chromium_path)
-                    except Exception:
-                        ف["comments"] = []
-    except Exception as e:
-        خطأ(str(e)); return 2
+        معلومة("جلب الملف ...")
+        try:
+            html = جلب_بسيط(f"https://www.tiktok.com/@{مستخدم}")
+            ملف = تحليل_ملف(استخراج_حالة(html), مستخدم)
+        except Exception as e:
+            خطأ(str(e)); return 2
 
-    if تصدير_json:
-        نص = json.dumps(النتيجة, ensure_ascii=False, indent=2)
-        طبع(نص)
-    else:
-        from io import StringIO
-        مخزن = StringIO(); قديم = sys.stdout; sys.stdout = مخزن
-        طباعة_عربية(النتيجة)
-        sys.stdout = قديم
-        نص = مخزن.getvalue()
-        طبع(نص)
+        فيديوهات = []
+        if playwright_جاهز:
+            معلومة(f"اعتراض {عدد_فيديوهات} فيديو ...")
+            try:
+                فيديوهات = جمع_فيديوهات_عميق(مستخدم, حد=عدد_فيديوهات, chromium_path=chromium_path)
+            except Exception as e:
+                تحذير(f"فيديوهات: {e}")
+        if فيديوهات:
+            ملف["recentVideos"] = فيديوهات
 
-    if ملف_حفظ:
-        with open(ملف_حفظ, "w", encoding="utf-8") as f:
-            f.write(نص)
-        if not تصدير_json: طبع(f"\n{أبيض}[✓]{صفر} حُفظ في: {ملف_حفظ}")
-    return 0
+        if الاختيار in ("3","4","5") and فيديوهات and playwright_جاهز:
+            معلومة("سحب تعليقات ...")
+            for ف in فيديوهات:
+                try:
+                    ف["comments"] = جمع_تعليقات_فيديو(مستخدم, ف["id"], حد=عدد_تعليقات,
+                                                      chromium_path=chromium_path, مع_الردود=True)
+                    طبع(f"    {باهت}· فيديو {ف['id'][:8]}: {len(ف['comments'])} تعليق{صفر}")
+                except Exception:
+                    ف["comments"] = []
+
+        if الاختيار == "3":
+            صيغة = اختيار_صيغة()
+            if صيغة in ("html","both"):
+                مسار = حفظ_نتيجة(ملف, "ملف حساب", مستخدم, "html"); نجاح(f"HTML: {مسار}")
+            if صيغة in ("pdf","both"):
+                مسار = حفظ_نتيجة(ملف, "ملف حساب", مستخدم, "pdf"); نجاح(f"PDF: {مسار}")
+            حفظ_أرشيف(ملف, مستخدم)
+            return 0
+
+        if الاختيار == "4":
+            معلومة("جلب المتابعين ...")
+            متابعون = []
+            متابَعون = []
+            try:
+                متابعون = جمع_قائمة_متابعين(مستخدم, "followers", 200, chromium_path)
+                طبع(f"    {باهت}· {len(متابعون)} متابع{صفر}")
+            except Exception as e: تحذير(f"متابعون: {e}")
+            try:
+                متابَعون = جمع_قائمة_متابعين(مستخدم, "following", 200, chromium_path)
+                طبع(f"    {باهت}· {len(متابَعون)} يتابع{صفر}")
+            except Exception as e: تحذير(f"متابَعون: {e}")
+            تحليل = تحليل_الشبكة(ملف, متابعون, متابَعون, فيديوهات)
+            عرض_ملخص_شبكة(تحليل)
+            صيغة = اختيار_صيغة()
+            if صيغة in ("html","both"):
+                مسار = حفظ_نتيجة(تحليل, "شبكة", مستخدم, "html"); نجاح(f"HTML: {مسار}")
+            if صيغة in ("pdf","both"):
+                مسار = حفظ_نتيجة(تحليل, "شبكة", مستخدم, "pdf"); نجاح(f"PDF: {مسار}")
+            حفظ_أرشيف(تحليل, f"{مستخدم}_شبكة")
+            return 0
+
+        if الاختيار == "5":
+            عداد = {}
+            for ف in فيديوهات:
+                for ت in ف.get("comments", []):
+                    uid = (ت.get("author") or {}).get("uniqueId")
+                    if uid and uid != مستخدم:
+                        عداد[uid] = عداد.get(uid, 0) + 1
+            if not عداد:
+                خطأ("لا تعليقات"); return 1
+            مرتّب = sorted(عداد.items(), key=lambda x: -x[1])
+            عنوان("المعلّقون")
+            for i, (uid, عدد) in enumerate(مرتّب[:20], 1):
+                طبع(f"  {أبيض}[{i}]{صفر} @{uid:<22} {عدد} تعليق")
+            خ = سؤال("\nاختر رقم أو @اسم", "1")
+            try:
+                رقم = int(خ)
+                uid = مرتّب[رقم - 1][0]
+            except (ValueError, IndexError):
+                uid = خ.lstrip("@").strip()
+            معلومة(f"تحليل @{uid} ...")
+            تقرير = ملف_فردي_كامل(uid, فيديوهات, مستخدم)
+            عرض_ملخص_فردي(تقرير)
+            صيغة = اختيار_صيغة()
+            if صيغة in ("html","both"):
+                مسار = حفظ_نتيجة(تقرير, "فردي", f"{مستخدم}_معلق_{uid}", "html"); نجاح(f"HTML: {مسار}")
+            if صيغة in ("pdf","both"):
+                مسار = حفظ_نتيجة(تقرير, "فردي", f"{مستخدم}_معلق_{uid}", "pdf"); نجاح(f"PDF: {مسار}")
+            حفظ_أرشيف(تقرير, f"{مستخدم}_معلق_{uid}")
+            return 0
+
+    خطأ("اختيار غير معروف")
+    return 1
 
 if __name__ == "__main__":
-    sys.exit(الرئيسية())
+    try:
+        sys.exit(الرئيسية())
+    except KeyboardInterrupt:
+        طبع()
+        خطأ("مقاطعة")
+        sys.exit(130)
+    except Exception as e:
+        خطأ(f"خطأ غير متوقع: {e}")
+        sys.exit(2)

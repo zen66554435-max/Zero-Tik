@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import sys, os, re, json, time, random, subprocess, shutil, csv
+import sys, os, re, json, time, random, subprocess, shutil
 from datetime import datetime
 from collections import defaultdict
 import urllib.request
@@ -46,7 +46,7 @@ _تثبيت_ذاتي()
 
 الفريق = "Zer Day"
 الأداة = "Zero Tik"
-الإصدار = "5.0"
+الإصدار = "6.0"
 مستودع = "zen66554435-max/Zero-Tik"
 
 الشعار = r"""
@@ -56,7 +56,7 @@ _تثبيت_ذاتي()
  ███╔╝  ██╔══╝  ██╔══██╗██║   ██║       ██║   ██║██╔═██╗
 ███████╗███████╗██║  ██║╚██████╔╝       ██║   ██║██║  ██╗
 ╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝        ╚═╝   ╚═╝╚═╝  ╚═╝
-              Zer Day  ·  Zero Tik  v5.0
+              Zer Day  ·  Zero Tik  v6.0
 """
 
 أبيض = "\033[97m"; صفر = "\033[0m"; باهت = "\033[90m"
@@ -666,7 +666,7 @@ def ملف_معلّق(uid, فيديوهات, مستخدم_الهدف):
             فيديوهات_علّق_عليها[fid]["تعليقاته_هنا"].append(ت.get("text"))
     إجمالي_إعجابات = sum((ت.get("إعجابات") or 0) for t in تعليقاته)
     عدد_ردود_الهدف = sum(1 for ت in تعليقاته if ت.get("رد_الهدف_عليه"))
-    أوقات = [ت["وقت"] for ت in تعليقاته if ت.get("وقت")]
+    أوقات = [ت["وقت"] for t in تعليقاته if ت.get("وقت")]
     النطاق_الزمني = (min(أوقات), max(أوقات)) if أوقات else None
     إحصاءات = {
         "uniqueId": uid,
@@ -790,7 +790,7 @@ def ملف_فردي_كامل(uid, فيديوهات, مستخدم_الهدف, م�
             if ك in ("على","الى","إلى","هذا","هذه","كان","كانت","اللي","التي","الذي"): continue
             كلمات[ك] = كلمات.get(ك, 0) + 1
     أكثر_كلمات = sorted([{"كلمة": k, "عدد": v} for k, v in كلمات.items() if v >= 2], key=lambda x: -x["عدد"])[:15]
-    أوقات = تحليل_أوقات([ف for ف in فيديوهات if any((ت.get("author") or {}).get("uniqueId") == uid for ت in ف.get("comments", []))], uid)
+    أوقات = تحليل_أوقات([ف for ف in فيديوهات if any((ت.get("author") or {}).get("uniqueId") == uid for t in ف.get("comments", []))], uid)
     return {
         "الهدف": مستخدم_الهدف, "الشخص": uid,
         "درجة_الصلة": درجة, "مساهمات_الدرجة": مساهمات,
@@ -869,6 +869,8 @@ def توليد_HTML(بيانات, نوع="ملف"):
         h += هاشتاج_html(بيانات)
     elif نوع == "مقارنة":
         h += مقارنة_html(بيانات)
+    elif نوع == "شامل":
+        h += شامل_html(بيانات)
     h += f'<div class="footer">{الأداة} · {الفريق} · v{الإصدار}</div></div></body></html>'
     return h
 
@@ -890,19 +892,6 @@ def ملف_html(بيانات):
         for ف in فيديوهات:
             h += f'<tr><td>{(ف.get("desc") or "—")[:80]}</td><td>{ف.get("playCount",0):,}</td><td>{ف.get("diggCount",0):,}</td><td>{ف.get("commentCount",0):,}</td><td>{ف.get("shareCount",0):,}</td></tr>'
         h += '</table>'
-        تعليقات_كلها = []
-        for ف in فيديوهات:
-            for ت in ف.get("comments", []):
-                تعليقات_كلها.append((ف, ت))
-        if تعليقات_كلها:
-            h += f'<h2>التعليقات ({len(تعليقات_كلها)})</h2>'
-            for ف, ت in تعليقات_كلها[:100]:
-                مؤلف = (ت.get("author") or {}).get("uniqueId", "—")
-                h += f'<div class="comment"><strong>@{مؤلف}</strong><br>{ت.get("text","")}<div class="video">{(ف.get("desc") or "")[:60]} · {ت.get("likesCount",0)} إعجاب</div>'
-                for ر in ت.get("replies", []):
-                    رد_مؤلف = (ر.get("author") or {}).get("uniqueId", "—")
-                    h += f'<div class="reply">↳ @{رد_مؤلف}: {ر.get("text","")}</div>'
-                h += '</div>'
     return h
 
 def شبكة_html(بيانات):
@@ -911,18 +900,13 @@ def شبكة_html(بيانات):
     h += f'<div class="stat"><div class="val">{بيانات["عدد_المتابَعين"]}</div><div class="lbl">يتابع</div></div>'
     h += f'<div class="stat"><div class="val">{len(بيانات["متبادلون"])}</div><div class="lbl">متبادلون</div></div>'
     h += '</div>'
-    if بيانات["درجات_الصلة"]:
+    if بيانات.get("درجات_الصلة"):
         h += '<h2>درجة الصلة</h2>'
         for م in بيانات["درجات_الصلة"][:20]:
             h += f'<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><strong>@{م["uniqueId"]}</strong><span class="pct">{م["درجة"]}%</span></div><div class="bar"><div class="bar-fill" style="width:{م["درجة"]}%"></div></div>'
             for س in م["مساهمات"]:
                 h += f'<div style="font-size:13px;color:var(--muted);margin-top:4px">· {س["إشارة"]} +{س["نقاط"]} — {س["سبب"]}</div>'
             h += '</div>'
-    if بيانات["المجموعات"]:
-        h += '<h2>المجموعات المكتشفة</h2><table><tr><th>أ</th><th>ب</th><th>تبادل</th></tr>'
-        for م in بيانات["المجموعات"]:
-            h += f'<tr><td>@{م["أ"]}</td><td>@{م["ب"]}</td><td>{م["عدد_تبادل"]}</td></tr>'
-        h += '</table>'
     return h
 
 def فردي_html(بيانات):
@@ -939,21 +923,6 @@ def فردي_html(بيانات):
     h += f'<div class="stat"><div class="val">{إ["إجمالي_الإعجابات_على_تعليقاته"]}</div><div class="lbl">إعجابات</div></div>'
     h += f'<div class="stat"><div class="val">{إ["عدد_مرات_رد_الهدف_عليه"]}</div><div class="lbl">ردود الهدف</div></div>'
     h += '</div>'
-    if بيانات["منشن_هو_لهم"]:
-        h += '<h3>يذكرهم</h3><div class="grid">'
-        for م in بيانات["منشن_هو_لهم"][:10]:
-            h += f'<div class="stat"><div class="val">{م["عدد"]}</div><div class="lbl">@{م["uniqueId"]}</div></div>'
-        h += '</div>'
-    if بيانات["من_يذكره"]:
-        h += '<h3>يذكرونه</h3><div class="grid">'
-        for م in بيانات["من_يذكره"][:10]:
-            h += f'<div class="stat"><div class="val">{م["عدد"]}</div><div class="lbl">@{م["uniqueId"]}</div></div>'
-        h += '</div>'
-    if بيانات["أكثر_كلمات"]:
-        h += '<h3>أكثر الكلمات</h3><div class="grid">'
-        for ك in بيانات["أكثر_كلمات"][:12]:
-            h += f'<div class="stat"><div class="val">{ك["عدد"]}</div><div class="lbl">{ك["كلمة"]}</div></div>'
-        h += '</div>'
     ملف = بيانات["ملف"]
     if ملف["التعليقات_بالتفصيل"]:
         h += f'<h2>كل تعليقاته ({len(ملف["التعليقات_بالتفصيل"])})</h2>'
@@ -996,6 +965,43 @@ def مقارنة_html(بيانات):
         h += '</table>'
     return h
 
+def شامل_html(بيانات):
+    ملف = بيانات["ملف"]
+    h = ملف_html(ملف)
+    
+    if بيانات.get("نبرة"):
+        ن = بيانات["نبرة"]
+        h += '<h2>تحليل النبرة</h2><div class="grid">'
+        h += f'<div class="stat"><div class="val">{ن["إيجابي"]}</div><div class="lbl">إيجابي</div></div>'
+        h += f'<div class="stat"><div class="val">{ن["سلبي"]}</div><div class="lbl">سلبي</div></div>'
+        h += f'<div class="stat"><div class="val">{ن["محايد"]}</div><div class="lbl">محايد</div></div>'
+        h += f'<div class="stat"><div class="val">{ن["الدرجة_العامة"]}</div><div class="lbl">الانطباع العام</div></div>'
+        h += '</div>'
+        
+    if بيانات.get("شبكة"):
+        h += شبكة_html(بيانات["شبكة"])
+        
+    if بيانات.get("وهمي"):
+        h += '<h2>حسابات مشبوهة (وهمية)</h2><table><tr><th>الحساب</th><th>الاسم</th><th>الاحتمال</th><th>العلامات</th></tr>'
+        for و in بيانات["وهمي"][:15]:
+            h += f'<tr><td>@{و["uniqueId"]}</td><td>{و["nickname"]}</td><td><span class="badge neg">{و["احتمال_وهمي"]}%</span></td><td>{", ".join(و["علامات"])}</td></tr>'
+        h += '</table>'
+
+    تعليقات_كلها = []
+    for ف in ملف.get("recentVideos", []):
+        for ت in ف.get("comments", []):
+            تعليقات_كلها.append((ف, ت))
+    if تعليقات_كلها:
+        h += f'<h2>عينة من التعليقات ({len(تعليقات_كلها)})</h2>'
+        for ف, ت in تعليقات_كلها[:150]:
+            مؤلف = (ت.get("author") or {}).get("uniqueId", "—")
+            h += f'<div class="comment"><strong>@{مؤلف}</strong><br>{ت.get("text","")}<div class="video">{(ف.get("desc") or "")[:60]} · {ت.get("likesCount",0)} إعجاب</div>'
+            for ر in ت.get("replies", []):
+                رد_مؤلف = (ر.get("author") or {}).get("uniqueId", "—")
+                h += f'<div class="reply">↳ @{رد_مؤلف}: {ر.get("text","")}</div>'
+            h += '</div>'
+    return h
+
 def توليد_PDF(html, مسار):
     try:
         from playwright.sync_api import sync_playwright
@@ -1031,16 +1037,6 @@ def حفظ_نتيجة(بيانات, نوع, هدف, صيغة="html"):
         f.write(html)
     return مسار
 
-def عرض_ملخص_فردي(بيانات):
-    طبع()
-    عنوان(f"تقرير: @{بيانات['الشخص']}")
-    طبع(f"  درجة الصلة: {أبيض}{بيانات['درجة_الصلة']}%{صفر}")
-    for س in بيانات["مساهمات_الدرجة"]:
-        طبع(f"    {باهت}·{صفر} {س['إشارة']:<15} {أخضر}+{س['نقاط']:<3}{صفر} {س['سبب']}")
-    إ = بيانات["إحصاءات"]
-    طبع()
-    طبع(f"  التعليقات: {إ['عدد_التعليقات']} · الفيديوهات: {إ['عدد_الفيديوهات_المختلفة']} · ردود الهدف: {إ['عدد_مرات_رد_الهدف_عليه']}")
-
 def عرض_ملخص_شبكة(بيانات):
     طبع()
     عنوان("تحليل الشبكة")
@@ -1071,6 +1067,7 @@ def الرئيسية():
     if playwright_جاهز:
         طبع(بند(4, "تحليل شبكة (متابعون/متابَعون/درجة صلة)"))
         طبع(بند(5, "تقرير فردي (أعلى صلة أو اختيار يدوي)"))
+        طبع(f"  {أبيض}[9]{صفر} {أخضر}الخيار الشامل (كل شيء في تقرير واحد){صفر}")
     طبع(بند(6, "هاشتاج"))
     طبع(بند(7, "مقارنة حسابين"))
     طبع(بند(8, "إعدادات (بروكسي)"))
@@ -1161,6 +1158,65 @@ def الرئيسية():
         if صيغة in ("pdf","both"):
             مسار = حفظ_نتيجة(بيانات, "ملف حساب", مستخدم, "pdf"); نجاح(f"PDF: {مسار}")
         حفظ_أرشيف(بيانات, مستخدم)
+        return 0
+
+    if الاختيار == "9":
+        if not playwright_جاهز:
+            خطأ("الخيار الشامل يتطلب Playwright/Chromium"); return 1
+        
+        عنوان("الخيار الشامل")
+        عدد_فيديوهات = int(سؤال("كم فيديو (للسحب العميق)", "30"))
+        عدد_تعليقات = int(سؤال("كم تعليق/فيديو", "100"))
+        
+        معلومة("1/5 جلب الملف الأساسي ...")
+        try:
+            html = جلب_بسيط(f"https://www.tiktok.com/@{مستخدم}")
+            ملف = تحليل_ملف(استخراج_حالة(html), مستخدم)
+        except Exception as e:
+            خطأ(str(e)); return 2
+            
+        معلومة(f"2/5 اعتراض {عدد_فيديوهات} فيديو ...")
+        فيديوهات = جمع_فيديوهات_عميق(مستخدم, حد=عدد_فيديوهات, chromium_path=chromium_path)
+        ملف["recentVideos"] = فيديوهات
+        
+        معلومة("3/5 سحب التعليقات والردود ...")
+        for ف in فيديوهات:
+            try:
+                ف["comments"] = جمع_تعليقات_فيديو(مستخدم, ف["id"], حد=عدد_تعليقات,
+                                                  chromium_path=chromium_path, مع_الردود=True)
+                طبع(f"    {باهت}· فيديو {ف['id'][:8]}: {len(ف['comments'])} تعليق{صفر}")
+            except Exception:
+                ف["comments"] = []
+                
+        معلومة("4/5 تحليل الشبكة (متابعون/متابَعون) ...")
+        متابعون = []
+        متابَعون = []
+        try:
+            متابعون = جمع_قائمة_متابعين(مستخدم, "followers", 200, chromium_path)
+            طبع(f"    {باهت}· {len(متابعون)} متابع{صفر}")
+        except Exception as e: تحذير(f"متابعون: {e}")
+        try:
+            متابَعون = جمع_قائمة_متابعين(مستخدم, "following", 200, chromium_path)
+            طبع(f"    {باهت}· {len(متابَعون)} يتابع{صفر}")
+        except Exception as e: تحذير(f"متابَعون: {e}")
+        
+        شبكة = تحليل_الشبكة(ملف, متابعون, متابَعون, فيديوهات)
+        
+        معلومة("5/5 بناء التقرير الشامل ...")
+        بيانات_شاملة = {
+            "ملف": ملف,
+            "شبكة": شبكة,
+            "وهمي": كشف_وهمي(متابعون),
+            "نبرة": تحليل_نبرة(فيديوهات)
+        }
+        
+        عرض_ملخص_شبكة(شبكة)
+        صيغة = اختيار_صيغة()
+        if صيغة in ("html","both"):
+            مسار = حفظ_نتيجة(بيانات_شاملة, "شامل", مستخدم, "html"); نجاح(f"HTML: {مسار}")
+        if صيغة in ("pdf","both"):
+            مسار = حفظ_نتيجة(بيانات_شاملة, "شامل", مستخدم, "pdf"); نجاح(f"PDF: {مسار}")
+        حفظ_أرشيف(بيانات_شاملة, f"{مستخدم}_شامل")
         return 0
 
     if الاختيار in ("2","3","4","5"):
